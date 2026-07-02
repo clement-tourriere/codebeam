@@ -1,0 +1,43 @@
+{
+  "name": "codebeam-vscode",
+  "displayName": "Codebeam",
+  "description": "Search the selected text in Codebeam.",
+  "version": "0.1.0",
+  "publisher": "codebeam",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:codebeam.searchSelection"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codebeam.searchSelection",
+        "title": "Codebeam: Search Selection"
+      }
+    ],
+    "configuration": {
+      "title": "Codebeam",
+      "properties": {
+        "codebeam.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Base URL of the Codebeam instance."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4"
+  }
+}

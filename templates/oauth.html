@@ -1,0 +1,28 @@
+{{define "page_oauth_consent"}}
+{{template "shell_start" .}}
+<main class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-8">
+  <div class="rounded-box border border-base-300 bg-base-100 p-6 shadow-sm">
+    <h1 class="text-lg font-semibold">Authorize {{.ClientName}}</h1>
+    <p class="mt-2 text-sm text-base-content/70">
+      <strong>{{.ClientName}}</strong> wants to access Codebeam as
+      <strong>{{displayUserName .User}}</strong>.
+    </p>
+    <ul class="mt-4 space-y-2 text-sm text-base-content/70">
+      <li class="flex items-start gap-2"><span>✓</span><span>Search and read the repositories your account can access</span></li>
+      <li class="flex items-start gap-2"><span>✓</span><span>Use the MCP retrieval tools at <code class="text-xs">{{.Resource}}</code></span></li>
+      <li class="flex items-start gap-2"><span>✗</span><span>No access to settings, tokens, or other users</span></li>
+    </ul>
+    <form method="post" action="/oauth/authorize" class="mt-6 flex gap-3">
+      {{range $key, $value := .Params}}
+      <input type="hidden" name="{{$key}}" value="{{$value}}">
+      {{end}}
+      <button class="btn btn-primary flex-1" type="submit" name="action" value="approve">Authorize</button>
+      <button class="btn btn-ghost flex-1" type="submit" name="action" value="deny">Deny</button>
+    </form>
+    <p class="mt-4 text-xs text-base-content/50">
+      You can revoke this access at any time from Settings → Connected agents.
+    </p>
+  </div>
+</main>
+{{template "shell_end" .}}
+{{end}}

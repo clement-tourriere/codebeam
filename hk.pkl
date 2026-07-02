@@ -1,0 +1,42 @@
+amends "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Builtins.pkl"
+
+// Go checks: gofmt auto-formats staged files; vet and build validate the module.
+local goLinters = new Mapping<String, Step> {
+    ["gofmt"] {
+        glob = "**/*.go"
+        check = "test -z \"$(gofmt -l {{ files }})\""
+        fix = "gofmt -w {{ files }}"
+    }
+    ["go-vet"] {
+        glob = "**/*.go"
+        check = "go vet ./..."
+    }
+    ["go-build"] {
+        glob = "**/*.go"
+        check = "go build ./..."
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = goLinters
+    }
+    ["pre-push"] {
+        steps {
+            ["go-test"] {
+                glob = "**/*.go"
+                check = "go test ./..."
+            }
+        }
+    }
+    ["fix"] {
+        fix = true
+        steps = goLinters
+    }
+    ["check"] {
+        steps = goLinters
+    }
+}

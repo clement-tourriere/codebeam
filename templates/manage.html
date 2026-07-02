@@ -1,0 +1,364 @@
+{{define "page_manage"}}
+{{template "shell_start" .}}
+{{template "nav" .}}
+<main class="mx-auto max-w-[92rem] px-4 py-6 sm:px-6 lg:px-8">
+  <div class="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold">Repositories</h1>
+      <p class="mt-1 text-sm text-base-content/70">Turn a repository on to index it and make it searchable. Use <span class="font-medium">Manage</span> on a row to review branches and freshness.</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a class="btn btn-outline btn-sm gap-2" href="/repos">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        Browse
+      </a>
+      <a class="btn btn-primary btn-sm gap-2" href="/sources">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        Add source
+      </a>
+    </div>
+  </div>
+
+  <div class="grid gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
+    {{template "partial_sources_rail" .}}
+
+    <div class="min-w-0">
+      {{template "partial_repo_status" .}}
+
+      <form id="repo-filter-form" class="mb-4" method="get" action="/repos/manage" hx-get="/repos/list" hx-target="#repo-list" hx-swap="outerHTML" hx-trigger="keyup changed delay:180ms, search">
+        <input type="hidden" name="source" value="{{.Filter.Source}}">
+        <input type="hidden" name="status" value="{{.Filter.Status}}">
+        <label class="input input-bordered input-sm flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input class="grow" type="search" name="q" value="{{.Filter.Query}}" placeholder="Find repositories by name, group, or source..." autocomplete="off" data-1p-ignore="true">
+        </label>
+      </form>
+
+      {{template "partial_repo_list" .}}
+
+      {{template "partial_repo_jobs" .}}
+    </div>
+  </div>
+
+  <div id="repo-drawer-root" class="repo-drawer-root">
+    <div class="repo-drawer-backdrop" data-drawer-close></div>
+    <aside class="repo-drawer" role="dialog" aria-modal="true" aria-label="Repository management">
+      <div id="repo-drawer" class="repo-drawer-body"></div>
+    </aside>
+  </div>
+</main>
+{{template "shell_end" .}}
+{{end}}
+
+{{define "partial_sources_rail"}}
+<aside id="sources-rail" class="lg:sticky lg:top-4 lg:self-start">
+  <div class="rounded-box border border-base-300 bg-base-100 p-2 shadow-sm">
+    <div class="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-base-content/50">Sources</div>
+    <ul class="menu menu-sm w-full gap-0.5 p-0">
+      <li>
+        <a class="{{if or (eq .Filter.Source "all") (eq .Filter.Source "")}}menu-active{{end}}" href="{{sourceFilterURL .Filter "all"}}">
+          <span class="truncate">All sources</span>
+          <span class="badge badge-ghost badge-sm">{{.Stats.Total}}</span>
+        </a>
+      </li>
+      {{range .Sources}}
+      <li>
+        <div class="flex items-center gap-1 px-0">
+          <a class="flex min-w-0 flex-1 items-center gap-2 {{if eq $.Filter.Source (providerSourceValue .Provider)}}menu-active{{end}}" href="{{sourceFilterURL $.Filter (providerSourceValue .Provider)}}" title="{{.InstalledCount}} active of {{.RepoCount}} · {{.Description}}">
+            <span class="truncate">{{.Label}}</span>
+            <span class="ml-auto flex shrink-0 items-center gap-1">
+              {{if gt .FailedCount 0}}<span class="badge badge-error badge-xs" title="{{.FailedCount}} failed">{{.FailedCount}}</span>{{end}}
+              <span class="badge badge-ghost badge-sm">{{.RepoCount}}</span>
+            </span>
+          </a>
+          <div class="dropdown dropdown-end">
+            <button type="button" tabindex="0" class="btn btn-ghost btn-xs btn-square" aria-label="Source actions for {{.Label}}">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+            </button>
+            <ul tabindex="0" class="menu dropdown-content z-10 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+              <li class="menu-title px-2 py-1 text-xs">{{.InstalledCount}} active · {{.IndexedCount}} indexed</li>
+              <li>
+                <form method="post" action="/sources/toggle" hx-post="/sources/toggle" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-filter-form" hx-confirm="Activate all {{.RepoCount}} repositories in {{.Label}}? This can start many clone/index jobs.">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <input type="hidden" name="enable" value="1">
+                  <button type="submit" class="gap-2">Activate all</button>
+                </form>
+              </li>
+              <li>
+                <form method="post" action="/sources/toggle" hx-post="/sources/toggle" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-filter-form" hx-confirm="Deactivate all {{.Label}} repositories and remove them from search?" data-confirm-variant="danger">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <input type="hidden" name="enable" value="0">
+                  <button type="submit" class="gap-2">Deactivate all</button>
+                </form>
+              </li>
+              {{if .CanSync}}
+              <li>
+                <form method="post" action="/repos/sync">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <button type="submit" class="gap-2">Sync</button>
+                </form>
+              </li>
+              {{end}}
+              <li>
+                <form method="post" action="/sources/remove" data-confirm="Remove this source and all related repository records, indexes, jobs, credentials, and Codebeam-managed clones? This cannot be undone." data-confirm-variant="danger">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <button type="submit" class="gap-2 text-error">Remove source</button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </li>
+      {{end}}
+    </ul>
+    <a class="btn btn-ghost btn-sm mt-1 w-full justify-start gap-2" href="/sources">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      Add source
+    </a>
+  </div>
+</aside>
+{{end}}
+
+{{define "partial_repo_status"}}
+<div id="repo-status" hx-get="/repos/status{{filterQuery .Filter}}" hx-trigger="every 2s" hx-swap="outerHTML">
+  {{if .Error}}<div class="alert alert-error mb-3"><span>{{.Error}}</span></div>{{end}}
+  <div role="tablist" class="tabs tabs-box mb-4 w-full flex-wrap justify-start">
+    <a role="tab" class="tab gap-2 {{if or (eq .Filter.Status "all") (eq .Filter.Status "")}}tab-active{{end}}" href="{{chipURL .Filter "all"}}">All <span class="badge badge-sm badge-ghost">{{.Stats.Total}}</span></a>
+    <a role="tab" class="tab gap-2 {{if eq .Filter.Status "indexed"}}tab-active{{end}}" href="{{chipURL .Filter "indexed"}}">Indexed <span class="badge badge-sm badge-success badge-outline">{{.Stats.Indexed}}</span></a>
+    <a role="tab" class="tab gap-2 {{if eq .Filter.Status "indexing"}}tab-active{{end}}" href="{{chipURL .Filter "indexing"}}">Indexing <span class="badge badge-sm badge-warning badge-outline gap-1">{{if gt .Stats.Active 0}}<span class="loading loading-spinner loading-xs"></span>{{end}}{{.Stats.Active}}</span></a>
+    <a role="tab" class="tab gap-2 {{if eq .Filter.Status "stale"}}tab-active{{end}}" href="{{chipURL .Filter "stale"}}">Stale <span class="badge badge-sm badge-warning badge-outline">{{.Stats.Stale}}</span></a>
+    {{if gt .Stats.Failed 0}}<a role="tab" class="tab gap-2 {{if eq .Filter.Status "failed"}}tab-active{{end}}" href="{{chipURL .Filter "failed"}}">Failed <span class="badge badge-sm badge-error badge-outline">{{.Stats.Failed}}</span></a>{{end}}
+    <a role="tab" class="tab gap-2 {{if eq .Filter.Status "off"}}tab-active{{end}}" href="{{chipURL .Filter "off"}}">Off <span class="badge badge-sm badge-ghost">{{.Stats.Off}}</span></a>
+  </div>
+</div>
+{{end}}
+
+{{define "partial_repo_jobs"}}
+<section id="repo-jobs" class="mt-6" hx-get="/repos/jobs{{filterQuery .Filter}}" hx-trigger="every 2s" hx-swap="outerHTML">
+  <details class="rounded-box border border-base-300 bg-base-100 shadow-sm" {{if .HasActiveIndexJobs}}open{{end}}>
+    <summary class="cursor-pointer px-4 py-3 text-base font-semibold">Recent index jobs</summary>
+    <div class="overflow-x-auto border-t border-base-300">
+      <table class="table table-zebra table-sm">
+        <thead>
+          <tr><th>Repository</th><th>Status</th><th>Started</th><th>Finished</th><th>Message</th></tr>
+        </thead>
+        <tbody>
+          {{range .Jobs}}
+          <tr>
+            <td class="font-medium">{{.RepoName}}</td>
+            <td><span class="badge badge-sm {{statusClass .Status}}">{{.Status}}</span></td>
+            <td class="whitespace-nowrap text-base-content/60">{{formatUnix .StartedAt}}</td>
+            <td class="whitespace-nowrap text-base-content/60">{{formatUnix .FinishedAt}}</td>
+            <td class="max-w-md truncate text-base-content/70" title="{{.Message}}">{{.Message}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="5" class="py-6 text-center text-base-content/60">No jobs yet.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+{{end}}
+
+{{define "partial_repo_list"}}
+<div id="repo-list" data-repo-bulk data-total="{{.FilteredTotal}}" data-shown="{{.DisplayedTotal}}" {{if .HasActiveIndexJobs}}hx-get="/repos/list{{filterQuery .Filter}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
+  {{if .Error}}
+  <div class="alert alert-error mb-3"><span>{{.Error}}</span></div>
+  {{end}}
+  {{if .Notice}}
+  <div class="alert alert-info mb-3"><span>{{.Notice}}</span></div>
+  {{end}}
+
+  <div class="mb-3 rounded-box border border-base-300 bg-base-100 p-3 shadow-sm">
+    <form id="repo-bulk-form">
+      <input type="hidden" name="q" value="{{.Filter.Query}}">
+      <input type="hidden" name="source" value="{{.Filter.Source}}">
+      <input type="hidden" name="status" value="{{.Filter.Status}}">
+      <input type="hidden" name="match_all" value="" data-match-all>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label class="flex cursor-pointer items-center gap-2 rounded-md border border-base-300 px-3 py-1.5">
+          <input class="checkbox checkbox-sm" type="checkbox" data-repo-select-all>
+          <span class="text-sm font-medium">Select all</span>
+        </label>
+        <span class="text-sm text-base-content/60"><span data-repo-selected-count>0</span> selected</span>
+        <button class="btn btn-primary btn-sm" type="button" data-bulk-action disabled
+          hx-post="/repos/bulk" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-bulk-form, [data-repo-checkbox]" hx-vals='{"bulk_action":"activate"}'
+          title="Turn on indexing for the selected repositories">Activate</button>
+        <button class="btn btn-outline btn-error btn-sm" type="button" data-bulk-action disabled
+          hx-post="/repos/bulk" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-bulk-form, [data-repo-checkbox]" hx-vals='{"bulk_action":"deactivate"}'
+          hx-confirm="Deactivate the selected repositories and remove them from search?" data-confirm-variant="danger"
+          title="Turn off indexing and remove the selected repositories from search">Deactivate</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-clear-selection hidden>Clear</button>
+        <span class="ml-auto flex items-center gap-2 text-xs text-base-content/50">
+          {{if .HasActiveIndexJobs}}<span class="loading loading-spinner loading-xs"></span> Refreshing ·{{end}}
+          Showing {{.DisplayedTotal}} of {{.FilteredTotal}}
+        </span>
+      </div>
+      {{if .HasMoreRepos}}
+      <div class="mt-2 hidden rounded-md bg-base-200 px-3 py-2 text-sm" data-selectall-banner>
+        <span data-selectall-text>All {{.DisplayedTotal}} shown are selected.</span>
+        <button type="button" class="link link-primary ml-1" data-select-all-matching>Select all {{.FilteredTotal}} matching</button>
+      </div>
+      {{end}}
+    </form>
+  </div>
+
+  <div class="grid gap-2">
+    {{range .Repos}}
+    <article class="rounded-box border border-base-300 bg-base-100 p-3 shadow-sm">
+      <div class="grid gap-3 lg:grid-cols-[auto_auto_minmax(0,1fr)_minmax(10rem,0.24fr)_minmax(8rem,0.18fr)_auto] lg:items-center">
+        <label class="flex items-center pl-1">
+          <input class="checkbox checkbox-sm" type="checkbox" name="repo_id" value="{{.Repo.ID}}" form="repo-bulk-form" aria-label="Select {{.Title}}" data-repo-checkbox>
+        </label>
+
+        <label class="flex items-center" title="{{if .Repo.Selected}}Indexing on — turn off to remove from search{{else}}Off — turn on to index and search{{end}}">
+          <input type="checkbox" class="toggle toggle-primary toggle-sm" name="selected" value="1" {{if .Repo.Selected}}checked{{end}}
+            hx-post="/repos/{{.Repo.ID}}/select" hx-target="#repo-list" hx-swap="outerHTML" hx-trigger="change" hx-include="#repo-filter-form"
+            aria-label="Toggle indexing for {{.Title}}">
+        </label>
+
+        <div class="min-w-0">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
+            {{if or (gt .Repo.IndexedAt 0) (eq .Repo.HostProvider "local")}}
+            <a href="/repo/{{.Repo.ID}}" class="min-w-0 max-w-full truncate text-sm font-semibold hover:text-primary hover:underline">{{.Title}}</a>
+            {{else}}
+            <span class="min-w-0 max-w-full truncate text-sm font-semibold">{{.Title}}</span>
+            {{end}}
+            {{if .Repo.Private}}<span class="badge badge-ghost badge-xs">private</span>{{end}}
+          </div>
+          <div class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-base-content/55">
+            <span class="truncate">{{.SourceLabel}}</span>
+            <span class="text-base-content/30">·</span>
+            <span class="truncate" title="Indexed branches">{{.BranchLabel}}</span>
+          </div>
+        </div>
+
+        <div class="min-w-0">
+          <div class="flex min-w-0 items-center gap-2">
+            {{if eq .Status "running"}}<span class="loading loading-spinner loading-xs"></span>{{end}}
+            {{if eq .Status "queued"}}<span class="loading loading-dots loading-xs"></span>{{end}}
+            <span class="badge {{.StatusClass}} badge-sm">{{.StatusLabel}}</span>
+          </div>
+          {{if .FreshnessLabel}}<div class="mt-0.5 truncate text-xs text-base-content/50" title="{{.StatusMessage}}">{{.FreshnessLabel}}</div>{{end}}
+        </div>
+
+        <div class="min-w-0 text-xs">
+          <span class="text-base-content/45">Last indexed</span>
+          <div class="truncate">{{.IndexedLabel}}</div>
+        </div>
+
+        <div class="flex flex-wrap justify-start gap-1 lg:justify-end">
+          <button type="button" class="btn btn-ghost btn-sm gap-1" hx-get="/repos/{{.Repo.ID}}/panel" hx-target="#repo-drawer" hx-swap="innerHTML" data-drawer-open aria-label="Manage {{.Title}}">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            Manage
+          </button>
+        </div>
+      </div>
+    </article>
+    {{else}}
+    <div class="rounded-box border border-base-300 bg-base-100 p-8 text-center text-base-content/60 shadow-sm">No repositories match these filters.</div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "partial_repo_panel"}}
+<div class="flex h-full flex-col" data-drawer-panel data-repo-id="{{.Repo.ID}}">
+  <div class="flex items-start justify-between gap-3 border-b border-base-300 px-5 py-4">
+    <div class="min-w-0">
+      <div class="flex min-w-0 items-center gap-2">
+        <h2 class="truncate text-lg font-semibold">{{.View.Title}}</h2>
+        {{if .Repo.Private}}<span class="badge badge-ghost badge-sm">private</span>{{end}}
+      </div>
+      <p class="mt-0.5 truncate text-sm text-base-content/60" title="{{.View.Subtitle}}">{{.View.Subtitle}}</p>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm btn-square" data-drawer-close aria-label="Close">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+
+  <div class="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+    <div class="flex items-center justify-between gap-3 rounded-box border border-base-300 bg-base-200/40 px-4 py-3">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          {{if eq .View.Status "running"}}<span class="loading loading-spinner loading-xs"></span>{{end}}
+          {{if eq .View.Status "queued"}}<span class="loading loading-dots loading-xs"></span>{{end}}
+          <span class="badge {{.View.StatusClass}}">{{.View.StatusLabel}}</span>
+        </div>
+        <div class="mt-1 text-xs text-base-content/60">{{.View.StatusMessage}}</div>
+        <div class="mt-0.5 text-xs text-base-content/50">Last indexed {{.View.IndexedLabel}}{{if .View.FreshnessLabel}} · {{.View.FreshnessLabel}}{{end}}</div>
+      </div>
+      <label class="flex shrink-0 cursor-pointer flex-col items-center gap-1" title="Toggle indexing">
+        <input type="checkbox" class="toggle toggle-primary" {{if .Repo.Selected}}checked{{end}}
+          hx-post="/repos/{{.Repo.ID}}/select" hx-target="#repo-list" hx-swap="outerHTML"
+          name="selected" value="1" hx-trigger="change" data-confirm-variant="danger"
+          {{if .Repo.Selected}}hx-confirm="Turn off indexing and remove this repository from search? Re-enabling re-indexes from scratch."{{end}}
+          aria-label="Toggle indexing">
+        <span class="text-[11px] text-base-content/55">{{if .Repo.Selected}}On{{else}}Off{{end}}</span>
+      </label>
+    </div>
+
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/50">Indexed branches</div>
+      {{if .Branches}}
+      <div class="flex flex-wrap gap-1.5">
+        {{range .Branches}}<span class="badge badge-outline badge-sm font-mono">{{.}}</span>{{end}}
+      </div>
+      {{else}}
+      <p class="text-sm text-base-content/55">{{if .Repo.Selected}}No branches indexed yet.{{else}}Turn this repository on to index its branches.{{end}}</p>
+      {{end}}
+    </div>
+
+    {{if not .IsLocal}}
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/50">Branch policy</div>
+      <form method="post" action="/repos/{{.Repo.ID}}/branches" hx-post="/repos/{{.Repo.ID}}/branches" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-filter-form" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <label class="form-control min-w-0 flex-1">
+          <input class="input input-bordered input-sm" type="text" name="branches" value="{{.BranchInput}}" placeholder="{{.Repo.DefaultBranch}} or *" title="Use * for all branches; prefix patterns with ! to exclude, e.g. *,!wip/*" autocomplete="off" data-1p-ignore="true">
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Save &amp; reindex</button>
+      </form>
+      <p class="mt-1 text-[11px] text-base-content/45">Use <span class="font-mono">*</span> for all branches; exclude with <span class="font-mono">!pattern</span> (e.g. <span class="font-mono">*,!wip/*</span>).</p>
+    </div>
+    {{end}}
+
+    <div class="flex flex-wrap gap-2">
+      {{if or (eq .View.Status "queued") (eq .View.Status "running")}}
+      <form method="post" action="/repos/{{.Repo.ID}}/cancel-index" hx-post="/repos/{{.Repo.ID}}/cancel-index" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-filter-form">
+        <button class="btn btn-error btn-outline btn-sm" type="submit">Cancel indexing</button>
+      </form>
+      {{else if .Repo.Selected}}
+      <form method="post" action="/repos/{{.Repo.ID}}/reindex" hx-post="/repos/{{.Repo.ID}}/reindex" hx-target="#repo-list" hx-swap="outerHTML" hx-include="#repo-filter-form">
+        <button class="btn btn-primary btn-sm" type="submit">Reindex now</button>
+      </form>
+      {{end}}
+      {{if .CanBrowse}}
+      <a class="btn btn-outline btn-sm gap-1" href="/repo/{{.Repo.ID}}">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        Browse code
+      </a>
+      {{end}}
+    </div>
+
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/50">Recent jobs</div>
+      <div class="overflow-hidden rounded-box border border-base-300">
+        <table class="table table-sm">
+          <tbody>
+            {{range .Jobs}}
+            <tr>
+              <td><span class="badge badge-xs {{statusClass .Status}}">{{.Status}}</span></td>
+              <td class="whitespace-nowrap text-xs text-base-content/55">{{sinceUnix .StartedAt}}</td>
+              <td class="max-w-[14rem] truncate text-xs text-base-content/70" title="{{.Message}}">{{.Message}}</td>
+            </tr>
+            {{else}}
+            <tr><td class="py-4 text-center text-sm text-base-content/55">No jobs yet.</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

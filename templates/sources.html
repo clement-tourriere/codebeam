@@ -1,0 +1,244 @@
+{{define "source_icon_github"}}<svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.21 11.16.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.37-1.34-1.74-1.34-1.74-1.09-.73.08-.72.08-.72 1.2.08 1.84 1.21 1.84 1.21 1.07 1.79 2.81 1.27 3.5.97.11-.76.42-1.27.76-1.56-2.67-.3-5.47-1.3-5.47-5.79 0-1.28.47-2.33 1.24-3.15-.13-.3-.54-1.51.12-3.15 0 0 1.01-.32 3.3 1.2.96-.26 1.98-.39 3-.4 1.02 0 2.04.14 3 .4 2.28-1.52 3.29-1.2 3.29-1.2.66 1.64.25 2.85.12 3.15.77.82 1.24 1.87 1.24 3.15 0 4.5-2.81 5.49-5.49 5.78.43.36.81 1.09.81 2.2 0 1.59-.01 2.87-.01 3.26 0 .31.21.68.83.56C20.57 21.88 24 17.49 24 12.29 24 5.78 18.63.5 12 .5Z"/></svg>{{end}}
+
+{{define "source_icon_gitlab"}}<svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m23.6 9.6-.03-.08-3.26-8.5a.85.85 0 0 0-.84-.54.85.85 0 0 0-.78.58l-2.2 6.73H7.5L5.3 1.06a.85.85 0 0 0-.78-.58.85.85 0 0 0-.84.54L.42 9.52l-.03.08a6.05 6.05 0 0 0 2.01 6.99l.01.01.03.02 4.96 3.72 2.46 1.86 1.5 1.13a1 1 0 0 0 1.21 0l1.5-1.13 2.46-1.86 4.99-3.74.01-.01a6.05 6.05 0 0 0 2.07-6.99Z"/></svg>{{end}}
+
+{{define "source_icon_local"}}<svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>{{end}}
+
+{{define "page_sources"}}
+{{template "shell_start" .}}
+{{template "nav" .}}
+<main class="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+  <div class="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Sources</h1>
+      <p class="mt-1 text-sm text-base-content/70">Where Codebeam finds your repositories. Connect a code host or point at folders on this machine, then pick what to index in <a href="/repos/manage" class="link link-hover text-primary">Manage repositories</a>.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="alert alert-error mb-4"><span>{{.Error}}</span></div>{{end}}
+  {{if .Notice}}<div class="alert alert-success mb-4"><span>{{.Notice}}</span></div>{{end}}
+
+  {{if .Sources}}
+  <section class="mb-8">
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/50">Your sources</h2>
+    <div class="grid gap-4 md:grid-cols-2">
+      {{range .Sources}}
+      <article class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="flex items-start gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-field bg-base-200 text-base-content/80">
+            {{if eq .Provider "github"}}{{template "source_icon_github"}}{{else if isGitLabProvider .Provider}}{{template "source_icon_gitlab"}}{{else}}{{template "source_icon_local"}}{{end}}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 class="truncate font-semibold">{{.Label}}</h3>
+              {{if .Connected}}<span class="badge badge-success badge-soft badge-sm">connected</span>{{else if not .IsLocal}}<span class="badge badge-ghost badge-sm">tracked</span>{{end}}
+            </div>
+            <p class="mt-0.5 truncate text-sm text-base-content/60" title="{{.Description}}">{{if .Connected}}Connected as {{.Username}}{{else}}{{.Description}}{{end}}</p>
+            <p class="mt-2 text-sm text-base-content/70">
+              <span class="font-semibold text-base-content">{{.RepoCount}}</span> {{if eq .RepoCount 1}}repository{{else}}repositories{{end}}
+              <span class="text-base-content/35">·</span> {{.InstalledCount}} active
+              <span class="text-base-content/35">·</span> {{.IndexedCount}} indexed
+              {{if .FailedCount}}<span class="text-base-content/35">·</span> <span class="font-medium text-error">{{.FailedCount}} failed</span>{{end}}
+            </p>
+          </div>
+          <div class="dropdown dropdown-end shrink-0">
+            <button type="button" tabindex="0" class="btn btn-ghost btn-sm btn-square" aria-label="More actions for {{.Label}}">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+            </button>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+              {{if gt .RepoCount 0}}
+              <li>
+                <form method="post" action="/sources/toggle" data-confirm="Activate all {{.RepoCount}} repositories in {{.Label}}? This can start many clone/index jobs.">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <input type="hidden" name="enable" value="1">
+                  <button type="submit">Activate all repositories</button>
+                </form>
+              </li>
+              <li>
+                <form method="post" action="/sources/toggle" data-confirm="Deactivate all {{.Label}} repositories and remove them from search?" data-confirm-variant="danger">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <input type="hidden" name="enable" value="0">
+                  <button type="submit">Deactivate all repositories</button>
+                </form>
+              </li>
+              {{end}}
+              <li>
+                <form method="post" action="/sources/remove" data-confirm="Remove this source and all related repository records, indexes, jobs, credentials, and Codebeam-managed clones? This cannot be undone." data-confirm-variant="danger">
+                  <input type="hidden" name="provider" value="{{.Provider}}">
+                  <button type="submit" class="text-error">Remove source…</button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          {{if .CanSync}}
+          <form method="post" action="/repos/sync">
+            <input type="hidden" name="provider" value="{{.Provider}}">
+            <button class="btn btn-primary btn-sm" type="submit">Sync</button>
+          </form>
+          {{end}}
+          <a class="btn btn-outline btn-sm" href="{{sourceManageURL .Provider}}">Manage repositories</a>
+        </div>
+      </article>
+      {{end}}
+    </div>
+  </section>
+  {{else}}
+  <div class="mb-8 rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center shadow-sm">
+    <h2 class="text-lg font-medium">No sources yet</h2>
+    <p class="mx-auto mt-1 max-w-md text-sm text-base-content/60">Connect a code host or add a repository below — everything you add shows up here.</p>
+  </div>
+  {{end}}
+
+  <section>
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/50">Add a source</h2>
+    <div class="tabs tabs-lift">
+      <!-- GitHub -->
+      <label class="tab gap-2">
+        <input type="radio" name="add_source_tab" checked>
+        {{template "source_icon_github"}}
+        GitHub
+      </label>
+      <div class="tab-content border-base-300 bg-base-100 p-5">
+        {{if .GitHubIdentity}}
+        <p class="flex items-center gap-2 text-sm text-base-content/70"><span class="inline-block h-2 w-2 rounded-full bg-success"></span>Connected as <span class="font-medium">{{.GitHubIdentity.Username}}</span></p>
+        <form method="post" action="/repos/sync" class="mt-3 flex flex-wrap gap-2">
+          <input type="hidden" name="provider" value="github">
+          <button class="btn btn-primary btn-sm" type="submit">Sync repositories</button>
+          <a class="btn btn-outline btn-sm" href="{{sourceManageURL "github"}}">Manage repositories</a>
+          {{if .GitHubConfigured}}<a class="btn btn-ghost btn-sm" href="/auth/github">Reconnect OAuth</a>{{end}}
+        </form>
+        {{else if .GitHubConfigured}}
+        <p class="text-sm text-base-content/60">Connect your github.com account to sync and index your repositories, including private ones.</p>
+        <a class="btn btn-primary btn-sm mt-3" href="/auth/github">Connect with OAuth</a>
+        {{else}}
+        <p class="text-sm text-base-content/60">Connect github.com with a personal access token. OAuth is also available once <span class="font-mono text-xs">CODEBEAM_GITHUB_CLIENT_ID</span> and <span class="font-mono text-xs">CODEBEAM_GITHUB_CLIENT_SECRET</span> are set.</p>
+        {{end}}
+        <div class="mt-4 border-t border-base-300 pt-4">
+          <form class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end" method="post" action="/repos/github-token" autocomplete="off" data-1p-ignore="true">
+            <label class="form-control">
+              <span class="mb-1 text-xs font-medium text-base-content/60">Personal access token</span>
+              <input class="input input-bordered input-sm" type="password" name="token" placeholder="github_pat_... or ghp_..." autocomplete="off" data-1p-ignore="true" required>
+            </label>
+            <button class="btn btn-outline btn-sm" type="submit">{{if .GitHubIdentity}}Update token{{else}}Connect with token{{end}}</button>
+          </form>
+          <p class="mt-2 text-xs text-base-content/50">For private repos, use a token with repository read access (classic <span class="font-mono">repo</span> / <span class="font-mono">read:user</span>, or equivalent fine-grained read permissions).</p>
+        </div>
+      </div>
+
+      <!-- Public GitHub repo -->
+      <label class="tab gap-2">
+        <input type="radio" name="add_source_tab">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+        Public repo
+      </label>
+      <div class="tab-content border-base-300 bg-base-100 p-5">
+        <p class="text-sm text-base-content/60">Paste any public github.com repository. No account or token needed — Codebeam indexes it now and keeps it fresh automatically.</p>
+        <form class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,0.45fr)_auto] lg:items-end" method="post" action="/repos/github-public" autocomplete="off" data-1p-ignore="true">
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Repository URL or owner/name</span>
+            <input class="input input-bordered input-sm" type="text" name="repo" placeholder="https://github.com/sourcegraph/zoekt" autocomplete="off" data-1p-ignore="true" required>
+          </label>
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Branches (optional)</span>
+            <input class="input input-bordered input-sm" type="text" name="branches" placeholder="default, release/*, *" title="Use * for all branches; prefix patterns with ! to exclude, e.g. *,!wip/*" autocomplete="off" data-1p-ignore="true">
+          </label>
+          <button class="btn btn-primary btn-sm" type="submit">Add &amp; index</button>
+        </form>
+        <p class="mt-2 text-xs text-base-content/50">Leave branches empty for the default branch. Use <span class="font-mono">*</span> for all branches and <span class="font-mono">!pattern</span> to exclude (for example <span class="font-mono">*,!wip/*</span>).</p>
+      </div>
+
+      <!-- GitLab -->
+      <label class="tab gap-2">
+        <input type="radio" name="add_source_tab">
+        {{template "source_icon_gitlab"}}
+        GitLab
+      </label>
+      <div class="tab-content border-base-300 bg-base-100 p-5">
+        {{if .GitLabIdentity}}
+        <p class="flex items-center gap-2 text-sm text-base-content/70"><span class="inline-block h-2 w-2 rounded-full bg-success"></span>Connected as <span class="font-medium">{{.GitLabIdentity.Username}}</span></p>
+        <form method="post" action="/repos/sync" class="mt-3 flex flex-wrap gap-2">
+          <input type="hidden" name="provider" value="gitlab">
+          <button class="btn btn-primary btn-sm" type="submit">Sync repositories</button>
+          <a class="btn btn-outline btn-sm" href="{{sourceManageURL "gitlab"}}">Manage repositories</a>
+          <a class="btn btn-ghost btn-sm" href="/auth/gitlab">Reconnect</a>
+        </form>
+        {{else if .GitLabOAuthConfigured}}
+        <p class="text-sm text-base-content/60">Connect <span class="font-medium">{{.GitLabBaseURL}}</span> to sync and index your repositories.</p>
+        <a class="btn btn-primary btn-sm mt-3" href="/auth/gitlab">Connect with OAuth</a>
+        {{else}}
+        <p class="text-sm text-base-content/60">GitLab OAuth is not configured. Set these environment variables, or use the <span class="font-medium">Self-managed GitLab</span> tab to connect with an access token instead.</p>
+        <p class="mt-3 font-mono text-xs text-base-content/50">CODEBEAM_GITLAB_CLIENT_ID<br>CODEBEAM_GITLAB_CLIENT_SECRET</p>
+        {{end}}
+      </div>
+
+      <!-- Self-managed GitLab -->
+      <label class="tab gap-2">
+        <input type="radio" name="add_source_tab">
+        {{template "source_icon_gitlab"}}
+        Self-managed
+      </label>
+      <div class="tab-content border-base-300 bg-base-100 p-5">
+        <p class="text-sm text-base-content/60">Connect an on-prem GitLab instance with a personal access token (<span class="font-mono text-xs">read_api</span> + <span class="font-mono text-xs">read_repository</span>).</p>
+        <form class="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" method="post" action="/repos/gitlab-token" autocomplete="off" data-1p-ignore="true">
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Instance URL</span>
+            <input class="input input-bordered input-sm" type="url" name="base_url" value="{{.GitLabBaseURL}}" placeholder="https://gitlab.company.com" autocomplete="off" data-1p-ignore="true" required>
+          </label>
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Access token</span>
+            <input class="input input-bordered input-sm" type="password" name="token" placeholder="glpat-..." autocomplete="off" data-1p-ignore="true" required>
+          </label>
+          <button class="btn btn-primary btn-sm" type="submit">Connect &amp; sync</button>
+        </form>
+        {{if .SelfManagedGitLab}}
+        <div class="mt-4 space-y-2 border-t border-base-300 pt-4">
+          {{range .SelfManagedGitLab}}
+          <div class="flex items-center justify-between gap-3 rounded-field border border-base-300 px-3 py-2">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 text-sm font-medium"><span class="inline-block h-2 w-2 rounded-full bg-success"></span>{{providerName .Provider}}</div>
+              <div class="truncate text-xs text-base-content/60">{{.Username}}</div>
+            </div>
+            <div class="flex shrink-0 flex-wrap justify-end gap-2">
+              <form method="post" action="/repos/sync">
+                <input type="hidden" name="provider" value="{{.Provider}}">
+                <button class="btn btn-outline btn-xs" type="submit">Sync</button>
+              </form>
+              <a class="btn btn-ghost btn-xs" href="{{sourceManageURL .Provider}}">Manage</a>
+              <form method="post" action="/sources/remove" data-confirm="Remove this source and all related repository records, indexes, jobs, credentials, and Codebeam-managed clones? This cannot be undone." data-confirm-variant="danger">
+                <input type="hidden" name="provider" value="{{.Provider}}">
+                <button class="btn btn-error btn-outline btn-xs" type="submit">Remove</button>
+              </form>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+
+      <!-- Local repository -->
+      <label class="tab gap-2">
+        <input type="radio" name="add_source_tab">
+        {{template "source_icon_local"}}
+        Local folder
+      </label>
+      <div class="tab-content border-base-300 bg-base-100 p-5">
+        <p class="text-sm text-base-content/60">Index a repository that already lives on this machine. It stays in place — Codebeam watches it and reindexes on change.</p>
+        <form class="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,0.45fr)_auto] md:items-end" method="post" action="/repos/local" autocomplete="off" data-1p-ignore="true">
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Path</span>
+            <input class="input input-bordered input-sm" type="text" name="path" placeholder="/path/to/repo" autocomplete="off" data-1p-ignore="true" required>
+          </label>
+          <label class="form-control">
+            <span class="mb-1 text-xs font-medium text-base-content/60">Name</span>
+            <input class="input input-bordered input-sm" type="text" name="name" placeholder="Optional" autocomplete="off" data-1p-ignore="true">
+          </label>
+          <button class="btn btn-primary btn-sm" type="submit">Add repository</button>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+{{template "shell_end" .}}
+{{end}}

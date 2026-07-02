@@ -1,0 +1,212 @@
+{{define "page_settings"}}
+{{template "shell_start" .}}
+{{template "nav" .}}
+<main class="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+  <div class="flex items-center justify-between gap-3">
+    <h1 class="text-xl font-semibold">Settings</h1>
+    <span class="badge {{if .User.IsAdmin}}badge-primary{{else}}badge-ghost{{end}} badge-sm">{{if .User.IsAdmin}}admin{{else}}member{{end}}</span>
+  </div>
+
+  {{if .Notice}}<div class="alert alert-success mt-4"><span>{{.Notice}}</span></div>{{end}}
+  {{if .Error}}<div class="alert alert-error mt-4"><span>{{.Error}}</span></div>{{end}}
+
+  {{if .NewTokenSecret}}
+  <div class="mt-4 rounded-box border border-success bg-success/10 p-5 shadow-sm">
+    <h2 class="text-base font-medium">Your new token “{{.NewTokenName}}”</h2>
+    <p class="mt-1 text-sm text-base-content/60">Copy it now — it will not be shown again.</p>
+    <code class="mt-3 block select-all break-all rounded-lg bg-base-100 p-3 text-sm">{{.NewTokenSecret}}</code>
+    <p class="mt-2 text-xs text-base-content/50">Use it as <code>Authorization: Bearer &lt;token&gt;</code> against <code>/api/*</code> and the <code>{{.MCPEndpoint}}</code> MCP endpoint.</p>
+  </div>
+  {{end}}
+
+  <div role="tablist" class="tabs tabs-lift mt-6">
+    <!-- API tokens -->
+    <input type="radio" name="settings_tabs" value="tokens" role="tab" class="tab" aria-label="API tokens" {{if eq .ActiveTab "tokens"}}checked{{end}} />
+    <div role="tabpanel" class="tab-content rounded-box border-base-300 bg-base-100 p-5">
+      <h2 class="text-base font-medium">API tokens</h2>
+      <p class="mt-1 text-sm text-base-content/60">
+        Personal access tokens authenticate scripts, CI, and agents against the JSON API and the MCP
+        endpoint. Tokens carry your repository permissions.
+      </p>
+
+      <form method="post" action="/settings/tokens" class="mt-4 flex flex-wrap items-end gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs text-base-content/60">Name</span>
+          <input type="text" name="name" class="input input-bordered input-sm" placeholder="ci-bot" required autocomplete="off" data-1p-ignore="true">
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs text-base-content/60">Expires in (days, empty = never)</span>
+          <input type="number" name="expires_days" min="0" class="input input-bordered input-sm w-40" placeholder="90" autocomplete="off">
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Create token</button>
+      </form>
+
+      {{if .Tokens}}
+      <div class="mt-4 overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            {{range .Tokens}}
+            <tr class="{{if .RevokedAt}}opacity-50{{end}}">
+              <td>{{.Name}}</td>
+              <td><code class="text-xs">{{.Prefix}}…</code></td>
+              <td class="text-xs">{{formatUnix .CreatedAt}}</td>
+              <td class="text-xs">{{if .LastUsedAt}}{{sinceUnix .LastUsedAt}}{{else}}never{{end}}</td>
+              <td class="text-xs">{{if .RevokedAt}}revoked{{else if .ExpiresAt}}{{formatUnix .ExpiresAt}}{{else}}never{{end}}</td>
+              <td class="text-right">
+                {{if not .RevokedAt}}
+                <form method="post" action="/settings/tokens/revoke" class="inline">
+                  <input type="hidden" name="token_id" value="{{.ID}}">
+                  <button class="btn btn-ghost btn-xs text-error" type="submit">Revoke</button>
+                </form>
+                {{end}}
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <p class="mt-3 text-sm text-base-content/50">No tokens yet.</p>
+      {{end}}
+    </div>
+
+    <!-- Connected agents -->
+    <input type="radio" name="settings_tabs" value="agents" role="tab" class="tab" aria-label="Connected agents" {{if eq .ActiveTab "agents"}}checked{{end}} />
+    <div role="tabpanel" class="tab-content rounded-box border-base-300 bg-base-100 p-5">
+      <h2 class="text-base font-medium">Connected agents</h2>
+      <p class="mt-1 text-sm text-base-content/60">
+        MCP clients (Claude Code, Cursor, …) that you authorized via OAuth. Point them at
+        <code>{{.MCPEndpoint}}</code> and they will walk the authorization flow in your browser.
+      </p>
+      {{if .Grants}}
+      <div class="mt-4 overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>Client</th><th>Authorized</th><th>Last used</th><th>Requests</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            {{range .Grants}}
+            <tr>
+              <td>
+                <div>{{.ClientName}}</div>
+                <div class="text-xs text-base-content/50" title="OAuth client id — each install registers its own">id <code>{{.ClientIDSuffix}}</code></div>
+              </td>
+              <td class="text-xs">{{formatUnix .CreatedAt}}</td>
+              <td class="text-xs">
+                {{if .LastUsedAt}}
+                <div>{{sinceUnix .LastUsedAt}}</div>
+                {{if .LastUsedIP}}<div class="text-base-content/50">from {{.LastUsedIP}}</div>{{end}}
+                {{if .LastUsedUA}}<div class="max-w-44 truncate text-base-content/50" title="{{.LastUsedUA}}">{{.LastUsedUA}}</div>{{end}}
+                {{else}}never{{end}}
+              </td>
+              <td class="text-xs">{{.UseCount}}</td>
+              <td class="text-xs">{{formatUnix .RefreshExpiresAt}}</td>
+              <td class="text-right">
+                <form method="post" action="/settings/grants/revoke" class="inline">
+                  <input type="hidden" name="grant_id" value="{{.ID}}">
+                  <button class="btn btn-ghost btn-xs text-error" type="submit">Revoke</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-2 text-xs text-base-content/50">
+        Each install registers its own client id, so identically named agents are separate grants —
+        use the id, last-used address, and request count to tell them apart. An unused grant expires
+        on its own on the date shown.
+      </p>
+      {{else}}
+      <p class="mt-3 text-sm text-base-content/50">No agents connected yet.</p>
+      {{end}}
+    </div>
+
+    {{if .User.IsAdmin}}
+    <!-- Users (admin) -->
+    <input type="radio" name="settings_tabs" value="users" role="tab" class="tab" aria-label="Users" {{if eq .ActiveTab "users"}}checked{{end}} />
+    <div role="tabpanel" class="tab-content rounded-box border-base-300 bg-base-100 p-5">
+      <h2 class="text-base font-medium">Users</h2>
+      <p class="mt-1 text-sm text-base-content/60">
+        Admins manage instance settings, local repository paths, and users. Members search and browse
+        the repositories they have access to. The last admin cannot be demoted.
+      </p>
+      <div class="mt-4 overflow-x-auto">
+        <table class="table table-sm">
+          <thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Role</th></tr></thead>
+          <tbody>
+            {{$current := .User}}
+            {{range .Users}}
+            <tr>
+              <td>{{.Name}}{{if eq .ID $current.ID}} <span class="badge badge-ghost badge-xs">you</span>{{end}}</td>
+              <td class="text-xs">{{.Email}}</td>
+              <td class="text-xs">{{formatUnix .CreatedAt}}</td>
+              <td>
+                <form method="post" action="/settings/users/role" class="flex items-center gap-2">
+                  <input type="hidden" name="user_id" value="{{.ID}}">
+                  <select name="role" class="select select-bordered select-xs">
+                    <option value="member" {{if not .IsAdmin}}selected{{end}}>member</option>
+                    <option value="admin" {{if .IsAdmin}}selected{{end}}>admin</option>
+                  </select>
+                  <button class="btn btn-ghost btn-xs" type="submit">Save</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-3 text-xs text-base-content/50">
+        Sign-in providers (GitHub/GitLab OAuth, OIDC SSO) and the session secret are configured with
+        environment variables, not here — see the configuration docs.
+      </p>
+    </div>
+
+    <!-- Indexing (admin) -->
+    <input type="radio" name="settings_tabs" value="indexing" role="tab" class="tab" aria-label="Indexing" {{if eq .ActiveTab "indexing"}}checked{{end}} />
+    <div role="tabpanel" class="tab-content rounded-box border-base-300 bg-base-100 p-5">
+      <h2 class="text-base font-medium">Remote auto-indexing</h2>
+      <p class="mt-1 text-sm text-base-content/60">
+        Periodically re-pull and reindex your selected remote repositories (GitHub, GitLab, self-managed
+        GitLab) so their search stays fresh — no manual reindex needed. Works for on-prem hosts that
+        can't reach Codebeam, since it polls outward. Local repositories are kept fresh automatically by
+        the file watcher.
+      </p>
+      <form method="post" action="/settings" class="mt-5 space-y-5">
+        <label class="flex w-fit cursor-pointer items-center gap-3">
+          <input type="checkbox" name="auto_index_remote" value="1" class="toggle toggle-primary" {{if .AutoIndexRemote}}checked{{end}}>
+          <span class="text-sm">Automatically reindex remote repositories</span>
+        </label>
+        <label class="form-control w-full max-w-xs">
+          <span class="label-text text-xs text-base-content/60">Refresh interval</span>
+          <input type="text" name="remote_refresh_interval" value="{{.RemoteRefreshInterval}}" class="input input-bordered input-sm" placeholder="30m" autocomplete="off" data-1p-ignore="true">
+          <span class="mt-1 text-xs text-base-content/50">How stale a repository may get before it is refreshed. Use durations like <code>15m</code>, <code>30m</code>, or <code>1h</code> (minimum 1m).</span>
+        </label>
+
+        <div class="divider my-1"></div>
+        <h2 class="text-base font-medium">Branch limits</h2>
+        <label class="form-control w-full max-w-xs">
+          <span class="label-text text-xs text-base-content/60">Maximum branches per repository</span>
+          <input type="number" name="max_indexed_branches" value="{{.MaxIndexedBranches}}" min="0" max="64" step="1" class="input input-bordered input-sm" placeholder="20" autocomplete="off" data-1p-ignore="true">
+          <span class="mt-1 text-xs text-base-content/50">When a branch pattern (like <code>*</code>) matches more than this, only the most recently updated branches are indexed — the default branch is always kept. The search index supports at most <code>64</code> branches per repository; <code>0</code> means that maximum.</span>
+        </label>
+
+        <div class="divider my-1"></div>
+        <h2 class="text-base font-medium">Inaccessible repositories</h2>
+        <label class="flex w-fit cursor-pointer items-center gap-3">
+          <input type="checkbox" name="auto_exclude_inaccessible" value="1" class="toggle toggle-primary" {{if .AutoExcludeInaccessible}}checked{{end}}>
+          <span class="text-sm">Automatically exclude repositories that fail with an access error</span>
+        </label>
+        <p class="max-w-md text-xs text-base-content/50">
+          When a remote repository fails to index because your token can't read it (for example a GitLab
+          project you're no longer a member of), drop it from your selection so the auto-refresher stops
+          retrying it. You can re-select it later once access is restored.
+        </p>
+
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+</main>
+{{template "shell_end" .}}
+{{end}}

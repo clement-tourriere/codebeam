@@ -1,0 +1,349 @@
+{{define "page_search"}}
+{{template "shell_start" .}}
+{{template "nav" .}}
+<main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+  {{$chips := activeSearchFilters .BasePath .Params}}
+  <form
+    class="mb-5 overflow-visible rounded-box border border-base-300 bg-base-100 p-4 shadow-sm sm:p-5"
+    hx-get="/search/results"
+    hx-target="#results"
+    hx-push-url="true"
+    autocomplete="off"
+    data-1p-ignore="true"
+  >
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h1 class="text-lg font-semibold tracking-tight">Code search</h1>
+      <span class="text-xs text-base-content/55">{{len .Repos}} indexed {{if eq (len .Repos) 1}}repository{{else}}repositories{{end}}</span>
+    </div>
+
+    <div class="flex items-stretch gap-2">
+      <label class="flex min-h-12 min-w-0 grow items-center gap-3 rounded-field border border-base-300 bg-base-100 px-4 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 text-base-content/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="min-w-0 grow bg-transparent text-lg outline-none placeholder:text-base-content/35" type="search" name="q" value="{{.Params.Query}}" placeholder="{{if .Params.Structural}}Structural pattern — e.g. if $ERR != nil { $$$ }{{else}}Search code — symbol, error string, TODO, regex…{{end}}" aria-label="Search code" autocomplete="off" data-1p-ignore="true" autofocus>
+      </label>
+      <button class="btn btn-primary min-h-12 px-6" type="submit">Search</button>
+    </div>
+    <p class="mt-2 {{if not .Params.Structural}}hidden{{end}} text-xs text-base-content/50" data-structural-hint>
+      Structural patterns are code with metavariables: <code class="font-mono">$VAR</code> captures one AST node, <code class="font-mono">$$$</code> any number —
+      <code class="font-mono">if $ERR != nil { $$$ }</code> · <code class="font-mono">console.log($$$)</code> · <code class="font-mono">useEffect($FN, [])</code>
+    </p>
+
+    {{if $chips}}
+    <div class="mt-3 flex flex-wrap items-center gap-1.5">
+      {{range $chips}}
+      <span class="filter-chip">
+        <span class="filter-chip-field">{{.Field}}</span>
+        <span class="filter-chip-value" title="{{.Value}}">{{.Value}}</span>
+        <a class="filter-chip-remove" href="{{.RemoveURL}}" title="Remove this filter" aria-label="Remove {{.Field}} filter {{.Value}}">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </a>
+      </span>
+      {{end}}
+      <a class="btn btn-ghost btn-xs" href="{{clearSearchFiltersURL .BasePath .Params}}">Clear all</a>
+    </div>
+    {{end}}
+
+    {{if .Params.Branch}}<input type="hidden" name="branch" value="{{.Params.Branch}}">{{end}}
+    {{if and .Params.Lang (not .Params.Structural)}}<input type="hidden" name="lang" value="{{.Params.Lang}}">{{end}}
+    {{if .Params.TopPath}}<input type="hidden" name="top" value="{{.Params.TopPath}}">{{end}}
+    {{if .Params.Ext}}<input type="hidden" name="ext" value="{{.Params.Ext}}">{{end}}
+    {{if .Params.Source}}<input type="hidden" name="source" value="{{.Params.Source}}">{{end}}
+    {{if .Params.Provider}}<input type="hidden" name="provider" value="{{.Params.Provider}}">{{end}}
+    {{if .Params.Dirty}}<input type="hidden" name="dirty" value="{{.Params.Dirty}}">{{end}}
+    {{if .Params.SymbolKind}}<input type="hidden" name="symbol_kind" value="{{.Params.SymbolKind}}">{{end}}
+    {{if .Params.Freshness}}<input type="hidden" name="freshness" value="{{.Params.Freshness}}">{{end}}
+
+    <details class="group mt-3" {{if or .Params.Repos .Params.Repo .Params.Path .Params.Normalized .Params.Symbols (and .Params.Sort (ne .Params.Sort "relevance"))}}open{{end}}>
+      <summary class="flex w-fit cursor-pointer select-none list-none items-center gap-1.5 rounded-field px-1 py-0.5 text-sm font-medium text-base-content/70 transition hover:text-base-content [&::-webkit-details-marker]:hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        Scope &amp; options
+        <span class="text-xs font-normal text-base-content/45">repositories, path, sort, matching</span>
+      </summary>
+      <div class="mt-3 rounded-box border border-base-300 bg-base-200/50 p-3 sm:p-4">
+      <div class="grid gap-3 lg:grid-cols-[minmax(18rem,1fr)_minmax(14rem,0.45fr)_minmax(12rem,0.35fr)]">
+        <div class="form-control min-w-0" data-repo-combobox>
+          <label id="search-repo-label" class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">Repositories</label>
+          <div class="relative">
+            <div class="flex min-h-12 flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 px-3 py-2 transition focus-within:border-primary focus-within:outline-2 focus-within:outline-primary/15">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+              <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" data-repo-combobox-selected></div>
+              <input class="min-w-[12rem] flex-1 bg-transparent text-sm outline-none placeholder:text-base-content/35" type="search" placeholder="Type to add repos" autocomplete="off" data-1p-ignore="true" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="search-repo-options" aria-labelledby="search-repo-label" data-repo-combobox-input>
+              <button class="btn btn-ghost btn-xs btn-circle shrink-0 invisible" type="button" aria-label="Clear repository filters" data-repo-combobox-clear>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+            <div class="hidden" data-repo-combobox-hidden>
+              {{range .Params.Repos}}<input type="hidden" name="repo" value="{{.}}">{{end}}
+            </div>
+            <div id="search-repo-options" class="search-combobox-menu absolute left-0 right-0 top-full z-40 mt-2 hidden overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-xl" role="listbox" data-repo-combobox-menu>
+              <div class="border-b border-base-300 px-3 py-2 text-xs font-medium text-base-content/60">Add repositories (OR)</div>
+              <div class="max-h-80 overflow-y-auto p-1" data-repo-combobox-list>
+                <button type="button" class="search-repo-option flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition hover:bg-base-200 focus:bg-base-200 focus:outline-none" role="option" data-repo-option data-value="" data-label="All indexed repositories" data-search="all indexed repositories">
+                  <span class="font-medium">All indexed repositories</span>
+                  <span class="badge badge-ghost badge-sm">clear</span>
+                </button>
+                {{range .Repos}}
+                <button type="button" class="search-repo-option flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left text-sm transition hover:bg-base-200 focus:bg-base-200 focus:outline-none" role="option" title="{{.FullName}}" data-repo-option data-value="{{.FullName}}" data-label="{{repoOptionLabel .}}" data-search="{{repoOptionLabel .}} {{repoTitle .}} {{repoSubtitle .}} {{.FullName}} {{providerName .HostProvider}} {{.BranchLabel}}">
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate font-medium">{{repoTitle .}}</span>
+                    <span class="block truncate font-mono text-xs text-base-content/55">{{repoSubtitle .}}</span>
+                  </span>
+                  <span class="flex shrink-0 flex-col items-end gap-1">
+                    <span class="badge badge-ghost badge-xs">{{providerName .HostProvider}}</span>
+                    {{if .BranchLabel}}<span class="badge badge-outline badge-xs max-w-24 truncate" title="Indexed branches">{{.BranchLabel}}</span>{{end}}
+                  </span>
+                </button>
+                {{end}}
+              </div>
+              <div class="hidden px-3 py-6 text-center text-sm text-base-content/60" data-repo-combobox-empty>No repositories match. Keep typing or clear the field.</div>
+              <div class="border-t border-base-300 px-3 py-2 text-xs text-base-content/50" data-repo-combobox-status></div>
+            </div>
+          </div>
+          <p class="mt-1 text-xs text-base-content/45">Choose more than one repo to search them together with OR.</p>
+        </div>
+        <label class="form-control min-w-0">
+          <span class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">Path</span>
+          <input class="input input-bordered h-12 min-h-12 w-full bg-base-100 text-sm" type="text" name="path" value="{{.Params.Path}}" placeholder="internal/.*\.go" autocomplete="off" data-1p-ignore="true">
+        </label>
+        <label class="form-control min-w-0 {{if not .Params.Structural}}hidden{{end}}" data-structural-lang>
+          <span class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">Language</span>
+          <select class="select select-bordered h-12 min-h-12 w-full bg-base-100 text-sm" name="lang" autocomplete="off" data-1p-ignore="true" {{if not .Params.Structural}}disabled{{end}}>
+            <option value="">Choose language…</option>
+            {{range .StructuralLangs}}
+            <option value="{{.}}" {{if eq $.Params.Lang .}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <label class="form-control min-w-0">
+          <span class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">Sort</span>
+          <select class="select select-bordered h-12 min-h-12 w-full bg-base-100 text-sm" name="sort" autocomplete="off" data-1p-ignore="true">
+            <option value="relevance" {{if or (eq .Params.Sort "") (eq .Params.Sort "relevance")}}selected{{end}}>Relevance</option>
+            <option value="repo" {{if eq .Params.Sort "repo"}}selected{{end}}>Repository</option>
+            <option value="path" {{if eq .Params.Sort "path"}}selected{{end}}>Path</option>
+            <option value="indexed_desc" {{if eq .Params.Sort "indexed_desc"}}selected{{end}}>Newest index</option>
+            <option value="indexed_asc" {{if eq .Params.Sort "indexed_asc"}}selected{{end}}>Oldest index</option>
+            <option value="match_count" {{if eq .Params.Sort "match_count"}}selected{{end}}>Most matches</option>
+          </select>
+        </label>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-x-8 gap-y-2">
+        <label class="flex cursor-pointer items-center gap-2" title="Ignore case and Latin accents for broader text matching.">
+          <input class="toggle toggle-primary toggle-sm" type="checkbox" name="norm" value="1" {{if .Params.Normalized}}checked{{end}}>
+          <span class="text-sm">Normalized search</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-2" title="Match definitions such as functions, types, methods, and constants via ctags.">
+          <input class="toggle toggle-primary toggle-sm" type="checkbox" name="sym" value="1" {{if .Params.Symbols}}checked{{end}}>
+          <span class="text-sm">Symbols only</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-2" title="Match code by syntax-tree shape with ast-grep patterns ($VAR, $$$). Requires choosing a language.">
+          <input class="toggle toggle-primary toggle-sm" type="checkbox" name="mode" value="structural" {{if .Params.Structural}}checked{{end}} data-structural-toggle>
+          <span class="text-sm">Structural (AST)</span>
+        </label>
+      </div>
+      </div>
+    </details>
+    <script>
+      (function () {
+        var script = document.currentScript;
+        var form = script && script.closest("form");
+        if (!form) return;
+        var toggle = form.querySelector("[data-structural-toggle]");
+        var langField = form.querySelector("[data-structural-lang]");
+        var hint = form.querySelector("[data-structural-hint]");
+        if (!toggle || !langField) return;
+        var langSelect = langField.querySelector("select");
+        function sync() {
+          langField.classList.toggle("hidden", !toggle.checked);
+          if (hint) hint.classList.toggle("hidden", !toggle.checked);
+          if (langSelect) langSelect.disabled = !toggle.checked;
+        }
+        toggle.addEventListener("change", sync);
+        sync();
+      })();
+    </script>
+  </form>
+
+  <div id="results">
+    {{template "partial_search_results" .}}
+  </div>
+</main>
+{{template "shell_end" .}}
+{{end}}
+
+{{define "partial_search_results"}}
+{{if .Error}}
+<div class="alert alert-error"><span>{{.Error}}</span></div>
+{{else if eq (len .Repos) 0}}
+<div class="rounded-box border border-base-300 bg-base-100 p-10 text-center shadow-sm">
+  <h2 class="text-lg font-medium">No indexed repositories yet</h2>
+  <p class="mx-auto mt-2 max-w-sm text-sm text-base-content/60">Connect GitLab, GitHub, or a local repository, then run indexing to start searching.</p>
+  <a class="btn btn-primary btn-sm mt-4" href="/repos">Open repositories</a>
+</div>
+{{else if .Result.EmptyReason}}
+<div class="rounded-box border border-base-300 bg-base-100 p-10 text-center text-base-content/60 shadow-sm">{{.Result.EmptyReason}}</div>
+{{else if .Params.Query}}
+<div class="mb-4 rounded-box border border-base-300 bg-base-100 p-3 shadow-sm">
+  <div class="relative">
+    <div class="flex flex-wrap items-center gap-2 text-sm text-base-content/70">
+      <span class="badge badge-outline badge-lg">{{.Result.FileCount}} files</span>
+      <span class="badge badge-outline badge-lg">{{.Result.MatchCount}} matches</span>
+      {{if .Params.Structural}}
+      <span class="badge badge-primary badge-outline badge-lg" title="Structural (AST) search via the embedded ast-grep engine">structural</span>
+      {{else}}
+      <span class="badge badge-ghost badge-lg" title="{{searchSortDescription .Params.Sort}}">Sorted by {{searchSortLabel .Params.Sort}}</span>
+      {{end}}
+      <span class="text-base-content/50">{{.Result.Duration}}</span>
+      <details class="group ml-auto">
+        <summary class="flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-base-content/40 hover:bg-base-200 hover:text-base-content/70 [&::-webkit-details-marker]:hidden" title="The raw expression this search compiled to — for debugging">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+          query
+        </summary>
+        <div class="absolute inset-x-0 top-full z-20 mt-2 max-h-64 overflow-auto break-all rounded-lg border border-base-300 bg-base-100 px-3 py-2 font-mono text-xs leading-relaxed text-base-content/70 shadow-lg">{{if .Params.Structural}}ast-grep ({{.Params.Lang}}): {{.Result.Query}}{{else}}{{.Result.ZoektQuery}}{{end}}</div>
+      </details>
+    </div>
+  </div>
+  {{if .Result.Truncated}}
+  <p class="mt-2 text-xs text-base-content/60">
+    <span class="font-medium text-warning">Partial results</span> — showing the first {{len .Result.Files}} of {{.Result.FileCount}} files.{{if .Result.FacetsTruncated}} This query is very broad, so the counts above are approximate.{{end}} Refine with a repo or path filter to reach the rest.
+  </p>
+  {{end}}
+</div>
+
+<div class="grid gap-4 {{if .Result.Facets}}lg:grid-cols-[20rem_minmax(0,1fr)]{{end}}">
+  {{if .Result.Facets}}
+  <aside class="space-y-3 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+    <div class="rounded-box border border-base-300 bg-base-100 p-3 shadow-sm">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold">Refine these results</h2>
+        {{if activeSearchFilterCount .BasePath .Params}}
+        <a class="btn btn-ghost btn-xs" href="{{clearSearchFiltersURL .BasePath .Params}}">Clear</a>
+        {{end}}
+      </div>
+      <p class="mt-1 text-xs text-base-content/50">{{if .Result.FacetsTruncated}}Counts cover the first {{.Result.FacetedFileCount}} of {{.Result.FileCount}} matched files.{{else}}Counts cover all matched files.{{end}}</p>
+    </div>
+    {{range .Result.Facets}}
+    {{if showFacetGroup $.BasePath .}}
+    {{$group := .}}
+    <section class="rounded-box border border-base-300 bg-base-100 p-3 shadow-sm" data-facet-group>
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-base-content/50">{{.Label}}</h3>
+        <span class="text-[11px] text-base-content/40">{{len .Values}}</span>
+      </div>
+      {{if gt (len .Values) 8}}
+      <label class="mb-2 flex h-8 items-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-2 text-xs focus-within:border-primary focus-within:bg-base-100">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-base-content/40" type="search" placeholder="Filter {{.Label}}" autocomplete="off" data-facet-filter>
+      </label>
+      {{end}}
+      <div class="max-h-72 space-y-1 overflow-y-auto pr-1" data-facet-values>
+        {{range .Values}}
+        <a class="flex items-start justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-base-200 {{if .Active}}bg-primary/10 text-primary{{end}}" href="{{facetURL $.BasePath $.Params $group.Field .Value}}" data-facet-value data-search="{{.Label}} {{.Value}}">
+          {{if eq $group.Field "repo"}}
+          <span class="min-w-0 flex-1 break-words font-mono text-xs leading-snug" title="{{.Value}}">{{.Label}}</span>
+          {{else}}
+          <span class="min-w-0 truncate" title="{{.Value}}">{{.Label}}</span>
+          {{end}}
+          <span class="badge badge-sm shrink-0 {{if .Active}}badge-primary{{else}}badge-ghost{{end}}">{{.Count}}</span>
+        </a>
+        {{end}}
+        <div class="hidden px-2 py-3 text-center text-xs text-base-content/50" data-facet-empty>No values match.</div>
+      </div>
+    </section>
+    {{end}}
+    {{end}}
+  </aside>
+  {{end}}
+  <div class="space-y-4">
+  {{range .Result.Files}}
+  {{$file := .}}
+  <article class="rounded-box border border-base-300 bg-base-100 shadow-sm">
+    <div class="border-b border-base-300 bg-base-200/40 px-4 py-3">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div class="min-w-0 flex-1">
+          <div class="flex min-w-0 items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+            <a class="min-w-0 truncate font-medium hover:text-primary hover:underline" href="{{codeURL .RepoID .Path 0 .Branches}}">{{.Path}}</a>
+            {{if .Language}}<span class="badge badge-ghost badge-sm shrink-0">{{.Language}}</span>{{end}}
+            {{if .Dirty}}<span class="badge badge-warning badge-sm shrink-0" title="This match comes from a file with uncommitted local changes">dirty</span>{{end}}
+          </div>
+          {{if .Branches}}
+          <div class="mt-1 flex min-w-0 pl-6">
+            <div class="branch-location relative inline-flex min-w-0 items-center gap-1.5" tabindex="0" aria-label="{{len .Branches}} branch location{{if ne (len .Branches) 1}}s{{end}}: {{branchTitle .Branches}}">
+              <span class="shrink-0 text-[11px] font-medium uppercase tracking-wide text-base-content/45">branch</span>
+              <span class="badge badge-outline badge-sm max-w-80 truncate font-mono" title="{{branchPrimary .Branches}}">{{branchPrimary .Branches}}</span>
+              {{if branchExtraCount .Branches}}<span class="badge badge-ghost badge-sm shrink-0">+{{branchExtraCount .Branches}}</span>{{end}}
+              <div class="branch-location-tooltip" role="tooltip">
+                <div class="mb-2 text-xs font-semibold text-base-content/60">{{len .Branches}} branch location{{if ne (len .Branches) 1}}s{{end}}</div>
+                <div class="grid gap-1.5">
+                  {{range .Branches}}
+                  <div class="rounded-lg bg-base-200/70 px-2 py-1 font-mono text-[11px] leading-snug text-base-content/80 break-all">{{.}}</div>
+                  {{end}}
+                </div>
+              </div>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        <div class="flex shrink-0 flex-wrap items-center gap-2 text-xs text-base-content/60 lg:justify-end">
+          {{if .Provider}}<span class="badge badge-ghost badge-xs">{{providerName .Provider}}</span>{{end}}
+          <span class="max-w-48 truncate" title="{{.RepoName}}">{{.RepoName}}</span>
+          {{if .IndexedAt}}<span class="badge badge-outline badge-xs" title="Last indexed {{formatUnix .IndexedAt}}">fresh {{sinceUnix .IndexedAt}}</span>{{end}}
+          {{if .Commit}}<span class="badge badge-ghost badge-xs font-mono" title="Indexed at commit {{.Commit}}">@{{shortCommit .Commit}}</span>{{end}}
+          <a class="btn btn-ghost btn-xs gap-1" href="/repo/{{.RepoID}}">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+            Browse
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <div class="min-w-max py-1 font-mono text-[13px]">
+        {{range .Lines}}
+        {{range .Before}}
+        <a class="code-line code-line-ctx px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+          <span class="code-line-number pr-4 text-right text-base-content/40">{{.Number}}</span>
+          <pre class="min-w-0 overflow-visible whitespace-pre">{{.Text}}</pre>
+        </a>
+        {{end}}
+        <a class="code-line code-line-match px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+          <span class="code-line-number pr-4 text-right text-base-content/60">{{.Number}}</span>
+          <pre class="min-w-0 overflow-visible whitespace-pre">{{range .Segments}}{{if .Match}}<mark class="rounded-sm bg-warning/40 px-0.5">{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</pre>
+        </a>
+        {{if .MetaVars}}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-0.5 pl-16 font-mono text-[11px] text-base-content/50">
+          {{range $name, $value := .MetaVars}}
+          <span class="whitespace-nowrap"><span class="text-primary/70">{{$name}}</span>&nbsp;=&nbsp;<span title="{{$value}}">{{$value}}</span></span>
+          {{end}}
+        </div>
+        {{end}}
+        {{range .After}}
+        <a class="code-line code-line-ctx px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+          <span class="code-line-number pr-4 text-right text-base-content/40">{{.Number}}</span>
+          <pre class="min-w-0 overflow-visible whitespace-pre">{{.Text}}</pre>
+        </a>
+        {{end}}
+        {{end}}
+      </div>
+    </div>
+  </article>
+  {{else}}
+  <div class="rounded-box border border-dashed border-base-300 bg-base-100 p-10 text-center shadow-sm">
+    <h2 class="text-lg font-semibold">No matches found</h2>
+    <p class="mx-auto mt-2 max-w-md text-sm text-base-content/60">Try a broader query, clear a repository/path filter, or turn off symbol-only search.</p>
+    {{if activeSearchFilterCount $.BasePath $.Params}}
+    <a class="btn btn-outline btn-sm mt-4" href="{{clearSearchFiltersURL $.BasePath $.Params}}">Clear filters</a>
+    {{end}}
+  </div>
+  {{end}}
+  </div>
+</div>
+{{else}}
+<div class="rounded-box border border-dashed border-base-300 bg-base-100 p-12 text-center shadow-sm">
+  <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+  </div>
+  <h2 class="mt-4 text-lg font-semibold">Ready when you are</h2>
+  <p class="mx-auto mt-2 max-w-md text-sm text-base-content/60">Enter a query above. The large search box is optimized for text first, then filters when you need precision.</p>
+</div>
+{{end}}
+{{end}}

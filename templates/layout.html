@@ -1,0 +1,90 @@
+{{define "shell_start"}}
+<!doctype html>
+<html lang="en" data-theme="codebeam">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codebeam</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("codebeam-theme");
+        // Migrate the pre-rebrand theme names.
+        if (t === "winter") { t = "codebeam"; }
+        if (t === "dim") { t = "codebeam-dark"; }
+        if (!t && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+          t = "codebeam-dark";
+        }
+        if (t) { document.documentElement.dataset.theme = t; }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b45e0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m18 16 4-4-4-4'/%3E%3Cpath d='m6 8-4 4 4 4'/%3E%3Cpath d='m14.5 4-5 16'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/assets/chroma.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="min-h-screen bg-base-200 text-base-content">
+{{end}}
+
+{{define "nav"}}
+<header class="sticky top-0 z-30 border-b border-base-300 bg-base-100/80 backdrop-blur">
+  <div class="navbar min-h-14 px-3 sm:px-5">
+    <div class="navbar-start gap-2">
+      <a href="/search" class="flex items-center gap-2 px-2 text-lg font-semibold tracking-tight text-primary">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+        <span>Codebeam</span>
+      </a>
+    </div>
+    {{if .User}}
+    <div class="navbar-center hidden gap-1 md:flex">
+      <a href="/search" class="btn btn-ghost btn-sm gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search
+      </a>
+      <a href="/repos" class="btn btn-ghost btn-sm gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        Repositories
+      </a>
+    </div>
+    <div class="navbar-end gap-1">
+      <details class="dropdown dropdown-end">
+        <summary class="btn btn-ghost btn-sm btn-square" aria-label="Settings menu" title="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </summary>
+        <ul class="menu dropdown-content z-50 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+          <li class="menu-title md:hidden">Navigate</li>
+          <li class="md:hidden"><a href="/search">Search</a></li>
+          <li class="md:hidden"><a href="/repos">Repositories</a></li>
+          <li class="menu-title">Settings</li>
+          <li><a href="/settings">Settings &amp; users</a></li>
+          <li><a href="/sources">Sources</a></li>
+          <li><a href="/repos/manage">Manage repositories</a></li>
+        </ul>
+      </details>
+      <button id="theme-toggle" type="button" class="btn btn-ghost btn-sm btn-square" aria-label="Toggle theme" title="Toggle theme">
+        <svg class="theme-icon-moon h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        <svg class="theme-icon-sun h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </button>
+      <span class="hidden text-sm text-base-content/70 sm:inline">{{displayUserName .User}}</span>
+      <form method="post" action="/logout">
+        <button class="btn btn-outline btn-sm" type="submit">Sign out</button>
+      </form>
+    </div>
+    {{else}}
+    <div class="navbar-end">
+      <button id="theme-toggle" type="button" class="btn btn-ghost btn-sm btn-square" aria-label="Toggle theme" title="Toggle theme">
+        <svg class="theme-icon-moon h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        <svg class="theme-icon-sun h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </button>
+    </div>
+    {{end}}
+  </div>
+</header>
+{{end}}
+
+{{define "shell_end"}}
+</body>
+</html>
+{{end}}

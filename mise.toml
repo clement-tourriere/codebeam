@@ -1,0 +1,54 @@
+[tools]
+go = "1.25.11"
+hk = "latest"
+node = "22"
+pkl = "latest"
+
+[env]
+_.file = ".env"
+
+[tasks.dev]
+description = "Run the Codebeam web server"
+depends = ["css:build"]
+run = "go run ./cmd/codebeam"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.build]
+description = "Build the Codebeam binary"
+depends = ["css:build"]
+run = "go build -o bin/codebeam ./cmd/codebeam"
+
+[tasks."wasm:build"]
+description = "Build the ast-grep WASI module and embed it in internal/structural"
+run = "wasm/astgrep/build.sh"
+
+[tasks."frontend:install"]
+description = "Install frontend npm dependencies when missing"
+run = "test -x frontend/node_modules/.bin/tailwindcss && test -f frontend/node_modules/htmx.org/dist/htmx.min.js || npm --prefix frontend install"
+
+[tasks."css:build"]
+description = "Build Tailwind/DaisyUI CSS and copy HTMX"
+depends = ["frontend:install"]
+run = "npm --prefix frontend run build"
+
+[tasks."css:watch"]
+description = "Watch Tailwind CSS"
+depends = ["frontend:install"]
+run = "npm --prefix frontend run watch"
+
+[tasks."docs:install"]
+description = "Install Astro Starlight documentation dependencies when missing"
+run = "test -x docs/node_modules/.bin/astro && test -d docs/node_modules/@astrojs/starlight || npm --prefix docs install"
+
+[tasks."docs:dev"]
+description = "Run the Astro Starlight documentation dev server"
+depends = ["docs:install"]
+run = "npm --prefix docs run dev"
+
+[tasks."docs:build"]
+description = "Build the Astro Starlight documentation site"
+depends = ["docs:install"]
+run = "npm --prefix docs run build"

@@ -1,0 +1,15 @@
+{
+  "name": "codebeam",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tailwindcss -i ./assets/css/input.css -o ../static/app.css --minify && cp ./node_modules/htmx.org/dist/htmx.min.js ../static/htmx.min.js",
+    "watch": "tailwindcss -i ./assets/css/input.css -o ../static/app.css --watch"
+  },
+  "dependencies": {
+    "@tailwindcss/cli": "^4.1.11",
+    "daisyui": "^5.0.43",
+    "htmx.org": "^2.0.4",
+    "tailwindcss": "^4.1.11"
+  }
+}

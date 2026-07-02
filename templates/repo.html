@@ -1,0 +1,118 @@
+{{define "page_repo"}}
+{{template "shell_start" .}}
+{{template "nav" .}}
+<div class="flex h-[calc(100dvh-3.5rem)] flex-col">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 bg-base-100 px-4 py-2">
+    <a href="/repo/{{.Repo.ID}}" class="flex items-center gap-2 font-semibold hover:text-primary">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+      {{.RepoTitle}}
+    </a>
+    <span class="badge {{.StatusClass}} badge-sm">{{.StatusLabel}}</span>
+    <form class="ml-auto flex items-center gap-2" action="/repo/{{.Repo.ID}}" method="get" hx-get="/repo/{{.Repo.ID}}" hx-target="#repo-main" hx-swap="innerHTML" hx-push-url="true" autocomplete="off" data-1p-ignore="true">
+      {{if .Search.Params.Branch}}<input type="hidden" name="branch" value="{{.Search.Params.Branch}}">{{end}}
+      {{if .Search.Params.Path}}<input type="hidden" name="path" value="{{.Search.Params.Path}}">{{end}}
+      {{if .Search.Params.TopPath}}<input type="hidden" name="top" value="{{.Search.Params.TopPath}}">{{end}}
+      {{if .Search.Params.Ext}}<input type="hidden" name="ext" value="{{.Search.Params.Ext}}">{{end}}
+      {{if .Search.Params.Lang}}<input type="hidden" name="lang" value="{{.Search.Params.Lang}}">{{end}}
+      {{if .Search.Params.Source}}<input type="hidden" name="source" value="{{.Search.Params.Source}}">{{end}}
+      {{if .Search.Params.Provider}}<input type="hidden" name="provider" value="{{.Search.Params.Provider}}">{{end}}
+      {{if .Search.Params.Dirty}}<input type="hidden" name="dirty" value="{{.Search.Params.Dirty}}">{{end}}
+      {{if .Search.Params.SymbolKind}}<input type="hidden" name="symbol_kind" value="{{.Search.Params.SymbolKind}}">{{end}}
+      {{if .Search.Params.Freshness}}<input type="hidden" name="freshness" value="{{.Search.Params.Freshness}}">{{end}}
+      {{if and .Search.Params.Sort (ne .Search.Params.Sort "relevance")}}<input type="hidden" name="sort" value="{{.Search.Params.Sort}}">{{end}}
+      {{if .Search.Params.Symbols}}<input type="hidden" name="sym" value="1">{{end}}
+      <label class="input input-bordered input-sm flex w-48 items-center gap-2 sm:w-64">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="search" name="q" value="{{.Search.Params.Query}}" class="grow" placeholder="Search this repo" autocomplete="off" data-1p-ignore="true" data-repo-search-input>
+      </label>
+      <label class="flex cursor-pointer items-center gap-1 text-xs text-base-content/70" title="Ignore case and Latin accents">
+        <input class="checkbox checkbox-primary checkbox-xs" type="checkbox" name="norm" value="1" {{if .Search.Params.Normalized}}checked{{end}} data-repo-norm>
+        <span>Normalized</span>
+      </label>
+    </form>
+  </div>
+
+  <div class="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-[18rem_minmax(0,1fr)]">
+    <aside class="hidden overflow-auto border-r border-base-300 bg-base-100 md:block">
+      {{if .Error}}
+      <div class="p-4 text-sm text-error">{{.Error}}</div>
+      {{else}}
+      <ul class="menu menu-sm w-full flex-nowrap gap-0.5 p-2" data-tree>
+        {{template "tree_children" .Tree}}
+      </ul>
+      {{end}}
+    </aside>
+    <main id="repo-main" class="overflow-auto bg-base-100">
+      {{if eq .View "file"}}{{template "partial_code" .}}{{else if eq .View "search"}}{{template "partial_search_results" .Search}}{{else}}{{template "partial_repo_overview" .}}{{end}}
+    </main>
+  </div>
+</div>
+{{template "shell_end" .}}
+{{end}}
+
+{{define "tree_children"}}
+{{range .}}{{template "tree_node" .}}{{end}}
+{{end}}
+
+{{define "tree_node"}}
+{{if .IsDir}}
+<li>
+  <details {{if .Open}}open{{end}} {{if not .Loaded}}hx-get="/repo/{{.RepoID}}/tree?path={{.Path}}" hx-target="find ul" hx-swap="innerHTML" hx-trigger="toggle once"{{end}}>
+    <summary class="tree-row">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+      <span class="truncate">{{.Name}}</span>
+    </summary>
+    <ul>
+      {{if .Loaded}}{{template "tree_children" .Children}}{{end}}
+    </ul>
+  </details>
+</li>
+{{else}}
+<li>
+  <a class="tree-row {{if .Active}}menu-active{{end}}" href="{{codeURL .RepoID .Path 0}}" hx-get="{{codeURL .RepoID .Path 0}}" hx-target="#repo-main" hx-swap="innerHTML" hx-push-url="true" data-tree-file>
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+    <span class="truncate">{{.Name}}</span>
+  </a>
+</li>
+{{end}}
+{{end}}
+
+{{define "partial_repo_overview"}}
+<div class="mx-auto max-w-3xl p-6 sm:p-10">
+  <div class="flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h1 class="truncate text-2xl font-semibold">{{.RepoTitle}}</h1>
+      <p class="mt-1 truncate text-sm text-base-content/60">{{.Repo.FullName}}</p>
+    </div>
+    <span class="badge {{.StatusClass}}">{{.StatusLabel}}</span>
+  </div>
+
+  <div class="mt-6 grid gap-3 sm:grid-cols-3">
+    <div class="rounded-box border border-base-300 bg-base-100 p-4">
+      <div class="text-xs uppercase tracking-wide text-base-content/50">Source</div>
+      <div class="mt-1 font-medium">{{.SourceLabel}}</div>
+    </div>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4">
+      <div class="text-xs uppercase tracking-wide text-base-content/50">Indexed branches</div>
+      <div class="mt-1 font-medium">{{.BranchLabel}}</div>
+    </div>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4">
+      <div class="text-xs uppercase tracking-wide text-base-content/50">Last indexed</div>
+      <div class="mt-1 font-medium">{{.IndexedAt}}</div>
+    </div>
+  </div>
+
+  <div class="mt-8 rounded-box border border-dashed border-base-300 bg-base-200/40 p-8 text-center">
+    <h2 class="text-base font-medium">Browse or search</h2>
+    <p class="mx-auto mt-1 max-w-md text-sm text-base-content/60">Pick a file from the tree on the left, or search across this repository.</p>
+    <form class="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row" action="/repo/{{.Repo.ID}}" method="get" hx-get="/repo/{{.Repo.ID}}" hx-target="#repo-main" hx-swap="innerHTML" hx-push-url="true" autocomplete="off" data-1p-ignore="true">
+      <input class="input input-bordered w-full sm:w-80" type="search" name="q" placeholder="Search {{.RepoTitle}}" autocomplete="off" data-1p-ignore="true">
+      <label class="flex cursor-pointer items-center gap-1 text-xs text-base-content/70" title="Ignore case and Latin accents">
+        <input class="checkbox checkbox-primary checkbox-xs" type="checkbox" name="norm" value="1">
+        <span>Normalized</span>
+      </label>
+      <button class="btn btn-primary" type="submit">Search</button>
+    </form>
+  </div>
+</div>
+{{end}}

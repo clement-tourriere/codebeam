@@ -1,0 +1,44 @@
+{{define "partial_code"}}
+<div class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-base-300 bg-base-100 px-4 py-2">
+  <nav class="flex min-w-0 flex-wrap items-center gap-1 font-mono text-xs text-base-content/70">
+    {{range .Crumbs}}{{if .Last}}<span class="font-semibold text-base-content">{{.Name}}</span>{{else}}<span>{{.Name}}</span><span class="text-base-content/30">/</span>{{end}}{{end}}
+  </nav>
+  <span class="shrink-0 text-xs text-base-content/40">{{len .Lines}} lines</span>
+</div>
+{{if .Symbols}}
+<details class="border-b border-base-300 bg-base-200/30">
+  <summary class="flex cursor-pointer items-center gap-2 px-4 py-2 text-xs font-medium text-base-content/70">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+    Symbols <span class="badge badge-ghost badge-xs">{{len .Symbols}}</span>
+  </summary>
+  <ul class="max-h-64 overflow-auto px-2 pb-2">
+    {{$repo := .Repo}}
+    {{range .Symbols}}
+    <li class="flex items-center justify-between gap-2 rounded px-2 py-0.5 hover:bg-base-200">
+      <a class="flex min-w-0 items-center gap-2 font-mono text-xs" href="#L{{.Line}}">
+        <span class="badge badge-ghost badge-xs shrink-0">{{.Kind}}</span>
+        <span class="truncate text-base-content">{{.Name}}</span>
+        {{if .Scope}}<span class="truncate text-base-content/40">{{.Scope}}</span>{{end}}
+        <span class="shrink-0 text-base-content/30">:{{.Line}}</span>
+      </a>
+      <a class="link link-hover shrink-0 text-[11px] text-base-content/50"
+         href="{{repoReferencesURL $repo.ID .Name}}"
+         hx-get="{{repoReferencesURL $repo.ID .Name}}"
+         hx-target="#repo-main" hx-swap="innerHTML" hx-push-url="true"
+         title="Find references to {{.Name}} in {{$repo.FullName}}">refs</a>
+    </li>
+    {{end}}
+  </ul>
+</details>
+{{end}}
+<section class="chroma py-3 font-mono text-[13px] leading-relaxed">
+  {{range .Lines}}
+  <div class="code-line px-2 sm:px-4 {{if .Highlight}}code-line-focus{{end}}" id="L{{.Number}}">
+    <a class="code-line-number pr-4 text-right text-base-content/40 hover:text-base-content" href="#L{{.Number}}">{{.Number}}</a>
+    <pre class="min-w-0 overflow-visible whitespace-pre">{{.HTML}}</pre>
+  </div>
+  {{else}}
+  <div class="px-4 py-8 text-center text-base-content/60">Empty file.</div>
+  {{end}}
+</section>
+{{end}}
