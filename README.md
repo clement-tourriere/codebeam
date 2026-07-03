@@ -202,3 +202,7 @@ This runs `cz bump` (computes the next semver from the commit history, updates `
 - cross-compiles self-contained binaries for linux/darwin × amd64/arm64 with the version injected,
 - publishes them (plus SHA-256 checksums) as a GitHub Release with generated notes, and
 - builds and pushes the multi-arch Docker image to `ghcr.io/clement-tourriere/codebeam` (`latest`, `X.Y`, `X.Y.Z`).
+
+## License
+
+[MIT](LICENSE). Codebeam depends on permissively licensed components, notably [Zoekt](https://github.com/sourcegraph/zoekt) (Apache-2.0), [wazero](https://github.com/tetratelabs/wazero) (Apache-2.0), [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) (BSD-3-Clause), and [ast-grep](https://github.com/ast-grep/ast-grep) (MIT).
