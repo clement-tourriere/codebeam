@@ -1,0 +1,53 @@
+---
+title: Codebeam
+description: Fast code search for you and your AI agents — one binary, always fresh, from laptop to team server.
+template: splash
+hero:
+  title: Search all your code. Even the line you just typed.
+  tagline: Codebeam is a self-hosted code search engine in a single binary. It indexes your local repositories and your GitHub/GitLab projects, keeps the index fresh automatically, and gives AI coding agents a fast, token-cheap way to find and read code.
+  actions:
+    - text: Get started
+      link: /codebeam/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/clement-tourriere/codebeam
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is Codebeam?
+
+`grep` only sees the repository you have open. Cloud code-search products only see what you pushed. Codebeam sits in between: a small server you run yourself — on your laptop or on a shared machine — that indexes **every repository you care about** and answers searches in milliseconds.
+
+Point it at local folders, public GitHub projects, or your private GitHub/GitLab repositories. Codebeam clones and indexes them with [Zoekt](https://github.com/sourcegraph/zoekt) (the trigram engine behind Sourcegraph), then keeps everything current on its own: local repositories are re-indexed within seconds of a file save, and remote ones are re-pulled on a schedule. When a search hit comes from a file you edited but haven't committed, the result says so with a `dirty` badge — you always know whether you're looking at reality or a snapshot.
+
+The same index is available everywhere you work: a web UI for humans, and an [MCP server, JSON API, and context-packing CLI](/codebeam/integrations/) for AI agents — so Claude Code or any other MCP client can search your codebase precisely instead of grepping through it one clone at a time.
+
+<CardGrid>
+	<Card title="More than text search" icon="magnifier">
+		Regex and literal search with Zoekt query syntax, **symbol search** (find the definition, not the 200 usages), **find references**, and **structural search** — match code by AST shape, like `if $ERR != nil { $$$ }`, in 11 languages.
+	</Card>
+	<Card title="Always fresh, zero effort" icon="approve-check-circle">
+		Local repositories are watched and re-indexed on save — uncommitted changes are searchable within seconds. Remote repositories refresh on a schedule. No reindex button to remember.
+	</Card>
+	<Card title="Built for AI agents" icon="rocket">
+		An MCP server with eight retrieval tools (search, symbols, references, structural, file reading, repo stats), a `codebeam ctx` command that packs cited context for a prompt, and a JSON API. Every result carries a `repo:path:line@commit` citation an agent can verify.
+	</Card>
+	<Card title="From laptop to team" icon="setting">
+		One binary, no external services. Run it privately on your machine, or deploy it for a team with GitHub/GitLab/OIDC sign-in, per-user repository permissions synced from the code host, and admin/member roles.
+	</Card>
+</CardGrid>
+
+## How it works
+
+Codebeam is a single Go process with a data directory. When you add a repository, it clones it (remote) or reads it in place (local), builds a Zoekt index shard, and extracts symbols with Universal Ctags. Searches run against the shards; results link into a built-in code viewer with a symbol outline and find-references navigation. SQLite stores the metadata — users, repositories, permissions, jobs — and everything lives under one directory you can back up.
+
+There is nothing else to operate: no database server, no search cluster, no message queue.
+
+## Pick your path
+
+- **"I just want to search my code"** → [Get started](/codebeam/getting-started/): install with one command, add a repository, search. Then learn the [query syntax and search features](/codebeam/searching/).
+- **"I want my AI agent to use it"** → hook up the [MCP server](/codebeam/integrations/) — one `claude mcp add` command for local use.
+- **"I'm setting this up for my team"** → configure [sign-in and permissions](/codebeam/oauth/), then follow the [deployment guide](/codebeam/deployment/).

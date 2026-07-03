@@ -1,183 +1,126 @@
 ---
-title: OAuth and tokens
-description: Configure GitHub, GitLab.com, self-managed GitLab, and personal access token connections.
+title: Authentication and access
+description: Sign-in methods, code-host connections, SSO, API tokens, roles, and permission sync.
 ---
 
-Codebeam supports several ways to authenticate users and fetch private repositories:
+Codebeam has two related but distinct kinds of authentication:
 
-| Method | Best for | Requires app-wide env vars? |
-| --- | --- | --- |
-| Development login | Local testing and single-user experiments. | No |
-| Public GitHub URL | Indexing public GitHub repositories. | No |
-| Personal access token (PAT) | Connecting one user's GitHub or self-managed GitLab repositories without setting up OAuth. | No |
-| GitHub OAuth | Shared login and repository sync for GitHub. | Yes |
-| GitLab OAuth | Shared login and repository sync for GitLab.com or one configured self-managed GitLab host. | Yes |
+1. **Signing in to Codebeam** — dev login, GitHub/GitLab OAuth, or OIDC single sign-on.
+2. **Connecting a code host** — giving Codebeam access to list and clone your repositories, via OAuth or a personal access token.
 
-:::caution[Disable development login on shared instances]
-Set `CODEBEAM_DEV_LOGIN=false` before exposing Codebeam to a team or the internet.
-:::
+GitHub/GitLab OAuth conveniently does both at once. This page covers all the options, plus what happens after sign-in: roles, repository permissions, and Codebeam's own API tokens.
 
-## Callback URL format
+## Choosing a method
 
-Codebeam builds OAuth callback URLs from `CODEBEAM_BASE_URL`:
+| Method | Signs you in | Fetches private repos | Setup |
+| --- | --- | --- | --- |
+| Development login | ✅ | — | None (localhost only by default) |
+| GitHub / GitLab OAuth | ✅ | ✅ | Create an OAuth app once |
+| OIDC SSO (Okta, Entra ID, …) | ✅ | — | Create an OIDC app once |
+| GitHub PAT | — | ✅ | Paste a token on `/sources` |
+| Self-managed GitLab PAT | — | ✅ | Paste a token on `/sources` |
+
+For a laptop, development login plus a PAT is zero-configuration. For a team server, configure OAuth and/or SSO and let each user connect their own code-host account.
+
+## Development login
+
+The **Continue in development mode** button signs you in with no password. It is enabled automatically only when `CODEBEAM_BASE_URL` is a loopback address (localhost), and disabled for any real host — so a reachable instance never ships an unauthenticated door. Override explicitly with `CODEBEAM_DEV_LOGIN=true|false`.
+
+The first user to sign in — by any method — becomes the instance **admin**.
+
+## OAuth callback URLs
+
+All OAuth flows redirect back to Codebeam at:
 
 ```text
 <CODEBEAM_BASE_URL>/auth/<provider>/callback
 ```
 
-Examples:
-
-```text
-http://localhost:8080/auth/github/callback
-http://localhost:8080/auth/gitlab/callback
-https://codebeam.example.com/auth/github/callback
-https://codebeam.example.com/auth/gitlab/callback
-```
-
-If OAuth fails with a redirect or callback mismatch, first check that `CODEBEAM_BASE_URL` exactly matches the URL users open in the browser.
+e.g. `https://codebeam.example.com/auth/github/callback`. The single most common OAuth failure is a mismatch here: `CODEBEAM_BASE_URL` must exactly match the URL users open in the browser (scheme, host, and port).
 
 ## GitHub OAuth
 
-Create a GitHub OAuth App:
-
-1. Open GitHub.
-2. Go to **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**.
-3. Fill in:
-   - **Application name:** `Codebeam`
-   - **Homepage URL:** your `CODEBEAM_BASE_URL`, for example `http://localhost:8080` or `https://codebeam.example.com`
-   - **Authorization callback URL:** `<CODEBEAM_BASE_URL>/auth/github/callback`
-4. Create the app.
-5. Copy the client ID and generate a client secret.
-
-Add them to `.env`:
+1. On GitHub: **Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Set the **Homepage URL** to your `CODEBEAM_BASE_URL` and the **Authorization callback URL** to `<CODEBEAM_BASE_URL>/auth/github/callback`.
+3. Copy the client ID, generate a client secret, and add both to the environment:
 
 ```dotenv
-CODEBEAM_BASE_URL=http://localhost:8080
 CODEBEAM_GITHUB_CLIENT_ID=...
 CODEBEAM_GITHUB_CLIENT_SECRET=...
 ```
 
-Restart Codebeam. The login page and `/sources` page will show GitHub OAuth as available.
+Restart Codebeam; GitHub appears on the login page and on `/sources`. Codebeam requests the `read:user`, `user:email`, and `repo` scopes — `repo` is what lets it list and clone the private repositories the user can access.
 
-### GitHub scopes
+## GitLab OAuth
 
-Codebeam requests these GitHub OAuth scopes:
-
-- `read:user`
-- `user:email`
-- `repo`
-
-`repo` is required so Codebeam can list and clone private repositories the user can access.
-
-## GitLab.com OAuth
-
-Create a GitLab OAuth application:
-
-1. Open GitLab.com.
-2. Go to **Preferences** → **Applications**.
-3. Create a new application:
-   - **Name:** `Codebeam`
-   - **Redirect URI:** `<CODEBEAM_BASE_URL>/auth/gitlab/callback`
-   - **Scopes:** `read_user`, `read_api`, `read_repository`
-   - Keep the app confidential so GitLab issues a secret.
-4. Copy the application ID and secret.
-
-Add them to `.env`:
+1. On GitLab (**Preferences → Applications**, or an instance/group-level application), create an app with redirect URI `<CODEBEAM_BASE_URL>/auth/gitlab/callback` and scopes `read_user`, `read_api`, `read_repository`. Keep it confidential so GitLab issues a secret.
+2. Configure Codebeam:
 
 ```dotenv
-CODEBEAM_BASE_URL=http://localhost:8080
-CODEBEAM_GITLAB_BASE_URL=https://gitlab.com
+CODEBEAM_GITLAB_BASE_URL=https://gitlab.com   # or https://gitlab.company.com
 CODEBEAM_GITLAB_CLIENT_ID=...
 CODEBEAM_GITLAB_CLIENT_SECRET=...
 ```
 
-Restart Codebeam and connect from `/login` or `/sources`.
-
-## Self-managed GitLab OAuth
-
-For OAuth against a self-managed GitLab instance, set `CODEBEAM_GITLAB_BASE_URL` before starting Codebeam:
-
-```dotenv
-CODEBEAM_BASE_URL=https://codebeam.example.com
-CODEBEAM_GITLAB_BASE_URL=https://gitlab.company.com
-CODEBEAM_GITLAB_CLIENT_ID=...
-CODEBEAM_GITLAB_CLIENT_SECRET=...
-```
-
-Create the OAuth application on `https://gitlab.company.com` with this redirect URI:
-
-```text
-https://codebeam.example.com/auth/gitlab/callback
-```
-
-Codebeam currently supports one app-wide GitLab OAuth host at a time. If you need to connect several self-managed GitLab instances, use the self-managed GitLab token flow in `/sources`.
+`CODEBEAM_GITLAB_BASE_URL` selects GitLab.com or one self-managed host — OAuth supports a single GitLab host per instance. Need several self-managed GitLabs? Use the [token flow](#self-managed-gitlab-pat) instead; each instance connects independently.
 
 ## OIDC single sign-on
 
-For company deployments, Codebeam signs users in against any spec-compliant OpenID Connect provider — Okta, Microsoft Entra ID, Google Workspace, Keycloak, Authelia, and friends — using the authorization-code flow with PKCE, `state`, and `nonce`.
+For company deployments, Codebeam signs users in against any spec-compliant OpenID Connect provider — Okta, Microsoft Entra ID, Google Workspace, Keycloak, Authelia — using the authorization-code flow with PKCE.
 
-1. Create a **web** application in your provider with the redirect URI `https://your-codebeam-host/auth/oidc/callback`.
-2. Configure Codebeam:
+1. Create a **web** application in your provider with redirect URI `<CODEBEAM_BASE_URL>/auth/oidc/callback`.
+2. Configure:
 
 ```dotenv
 CODEBEAM_OIDC_ISSUER=https://your-tenant.okta.com
 CODEBEAM_OIDC_CLIENT_ID=...
 CODEBEAM_OIDC_CLIENT_SECRET=...
-CODEBEAM_OIDC_NAME=Okta
-# Optionally restrict sign-in to company email domains:
-CODEBEAM_OIDC_ALLOWED_DOMAINS=acme.com
+CODEBEAM_OIDC_NAME=Okta                      # login button label
+CODEBEAM_OIDC_ALLOWED_DOMAINS=acme.com       # optional email-domain allowlist
 ```
 
-The login page then shows **Continue with Okta**. Users are provisioned on first sign-in: the very first user of the instance becomes the admin, everyone after joins as a member. Endpoints are discovered from `{issuer}/.well-known/openid-configuration`, so there is nothing else to configure.
+Endpoints are discovered from `{issuer}/.well-known/openid-configuration` — nothing else to configure. The login page shows **Continue with Okta**, and users are provisioned on first sign-in. SSO handles *identity only*; users still connect a code host (OAuth or PAT) to index private repositories.
 
-For a locked-down deployment, combine SSO with `CODEBEAM_DEV_LOGIN=false` so the SSO (and/or code-host OAuth) buttons are the only way in.
+For a locked-down deployment, combine SSO with `CODEBEAM_DEV_LOGIN=false` so SSO and/or code-host OAuth are the only ways in.
 
-## Personal access tokens
+## Personal access tokens for code hosts
 
-PAT connections are per-user and are entered from `/sources`. They do not require app-wide OAuth variables.
+PAT connections are per-user, entered on `/sources`, and need no app-wide configuration.
 
 ### GitHub PAT
 
-Use a token that can read the repositories you want to index.
+Any token that can read the repositories you want to index:
 
-- Classic token: `repo` and `read:user` are sufficient for private repository sync.
-- Fine-grained token: grant repository metadata and contents read access for the repositories you want Codebeam to index.
+- **Classic**: `repo` (plus `read:user`) covers private repository sync.
+- **Fine-grained**: grant *metadata* and *contents* read access to the repositories you want.
 
-After saving the token, click **Sync repositories**, then choose repositories from `/repos/manage`.
+After saving, click **Sync repositories** and pick repositories on `/repos/manage`.
 
 ### Self-managed GitLab PAT
 
-Use a token with:
+Enter the instance URL (e.g. `https://gitlab.company.com`) and a token with `read_api` and `read_repository`. Each self-managed instance is tracked as its own source, so you can connect several.
 
-- `read_api`
-- `read_repository`
+## Roles and permissions
 
-In `/sources`, enter the GitLab instance URL, for example `https://gitlab.company.com`, and the token. Codebeam will connect, sync repositories, and treat that instance separately from GitLab.com.
+**Two roles.** The first user becomes the **admin**; everyone after joins as a **member**. Admins manage instance settings (the Indexing tab), register local-disk repositories, and change user roles on **Settings → Users** (the last admin can't be demoted). Everything else — searching, connecting code hosts, API tokens — is available to every user.
 
-## Public GitHub repositories without auth
+**Repository access follows the code host.** Each user sees only the repositories their connected accounts can access. A background sync (hourly by default) mirrors changes: gain access to a private repository on GitHub and it appears in your Codebeam search; lose it and it disappears — no manual re-sync. Public repositories are visible to everyone and never pruned. Tune with `CODEBEAM_SYNC_PERMISSIONS` and `CODEBEAM_PERMISSION_SYNC_INTERVAL`.
 
-You can add public GitHub repositories from `/sources` without OAuth or a token. Paste either:
+**Tokens are encrypted at rest.** Code-host tokens are stored AES-encrypted, with the key kept *outside* the data directory — see [Configuration](/codebeam/configuration/#server-and-authentication).
 
-```text
-sourcegraph/zoekt
-https://github.com/sourcegraph/zoekt
-```
+## Codebeam API tokens
 
-Optionally enter comma-separated branches, such as:
+For scripts and agents calling the [JSON API or the HTTP MCP endpoint](/codebeam/integrations/), create a personal access token under **Settings → API tokens**. Tokens are prefixed `cbp_`, shown once, stored only as hashes, can expire, and can be revoked. A token carries *your* repository permissions — it sees exactly what you see.
 
-```text
-main,release/1.x
-```
+MCP clients using OAuth instead of a token appear under **Settings → Connected agents**, where each grant can be revoked.
 
-Leave the branch field empty to index the repository's default branch.
-
-## OAuth troubleshooting
+## Troubleshooting sign-in
 
 | Symptom | Check |
 | --- | --- |
-| Provider button says OAuth is not configured | Both client ID and secret must be non-empty in the environment, and Codebeam must be restarted. |
-| Redirect URI mismatch | The provider's callback URL must exactly match `CODEBEAM_BASE_URL + /auth/<provider>/callback`. |
-| OAuth works locally but fails behind a proxy | Set `CODEBEAM_BASE_URL` to the external HTTPS URL, not the internal listen address. |
-| GitLab OAuth sends users to the wrong host | Set `CODEBEAM_GITLAB_BASE_URL` to the intended GitLab host and restart. |
-| Private repositories do not appear | Verify OAuth/PAT scopes and that the signed-in user has access to the repositories. |
-| Callback reports invalid OAuth state | Make sure browser cookies are allowed and the same Codebeam instance handles the start and callback requests. |
+| Provider button missing or disabled | Both client ID and secret must be set, and Codebeam restarted. |
+| Redirect URI mismatch | The provider's callback must exactly equal `<CODEBEAM_BASE_URL>/auth/<provider>/callback`. |
+| OAuth works locally but fails behind a proxy | Set `CODEBEAM_BASE_URL` to the external HTTPS URL, not the listen address. |
+| GitLab OAuth goes to the wrong host | Set `CODEBEAM_GITLAB_BASE_URL` and restart. |
+| Private repositories missing after sync | Verify token/OAuth scopes and that the account actually has access. |
+| Callback reports invalid state | Allow cookies, and make sure the same instance handles the start and the callback. |

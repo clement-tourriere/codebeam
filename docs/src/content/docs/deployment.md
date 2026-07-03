@@ -1,36 +1,62 @@
 ---
 title: Deployment
-description: Run Codebeam as a shared service with Docker or a self-contained binary.
+description: Run Codebeam as a shared service for your team, with Docker or a plain binary behind a reverse proxy.
 ---
 
-Codebeam runs as a single process with a persistent data directory, configured through environment variables. Two supported deployment shapes: the official Docker image, or a self-contained release binary. Either way, `git` must be available at runtime — Codebeam shells out to it to clone, fetch, and read repositories (the Docker image includes it, plus Universal Ctags for symbol indexing).
+A shared Codebeam instance is deliberately boring to run: **one process, one data directory, no external services**. Deploy the Docker image or the self-contained binary, put a reverse proxy in front for HTTPS, and back up one directory. `git` must be available at runtime — Codebeam shells out to it to clone and read repositories (the Docker image includes it, plus Universal Ctags for symbol search).
 
 ## Production checklist
 
-Before sharing an instance:
+Before pointing teammates at an instance:
 
-- Use HTTPS through a reverse proxy.
-- Set `CODEBEAM_BASE_URL` to the external URL.
+- Serve **HTTPS** through a reverse proxy, and set `CODEBEAM_BASE_URL` to the external URL.
 - Set a strong `CODEBEAM_SESSION_SECRET`.
-- Set `CODEBEAM_DEV_LOGIN=false`.
-- Store runtime data in a persistent, backed-up `CODEBEAM_DATA_DIR`.
-- Provision the token-encryption key: set `CODEBEAM_ENCRYPTION_KEY` (or let Codebeam auto-generate a key file where the process can persist it), and back the key up **separately** from the data directory. See [Backups](#backups).
-- Configure OAuth callback URLs against the external URL.
+- Set `CODEBEAM_DEV_LOGIN=false` explicitly.
+- Put the data in a persistent, backed-up `CODEBEAM_DATA_DIR`.
+- Set `CODEBEAM_ENCRYPTION_KEY` explicitly (or persist the auto-generated key file) and back the key up **separately** from the data — see [Backups](#backups).
+- Configure [OAuth or SSO](/codebeam/oauth/) with callbacks against the external URL.
 - Restrict filesystem permissions on the data directory and environment file.
 
-## Get the binary
+## Docker
 
-Released binaries are self-contained — the web UI assets are embedded, so a single file is enough:
+Multi-arch images (linux/amd64, linux/arm64) are published to GHCR on every release: `ghcr.io/clement-tourriere/codebeam` with `latest`, `X.Y`, and `X.Y.Z` tags. The image listens on `:8080` and uses **two volumes**:
+
+- `/data` — database, cloned repositories, and indexes (`CODEBEAM_DATA_DIR`).
+- `/config` — the auto-generated token-encryption key, deliberately separate from `/data` so a stolen data backup does not also carry the key. Persist both; losing `/config` makes stored code-host tokens unreadable (or set `CODEBEAM_ENCRYPTION_KEY` explicitly instead).
+
+```yaml
+services:
+  codebeam:
+    image: ghcr.io/clement-tourriere/codebeam:latest
+    restart: unless-stopped
+    environment:
+      CODEBEAM_BASE_URL: "https://codebeam.example.com"
+      CODEBEAM_SESSION_SECRET: "replace-with-a-long-random-value"
+      CODEBEAM_DEV_LOGIN: "false"
+      CODEBEAM_GITHUB_CLIENT_ID: "..."
+      CODEBEAM_GITHUB_CLIENT_SECRET: "..."
+    volumes:
+      - codebeam-data:/data
+      - codebeam-config:/config
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  codebeam-data:
+  codebeam-config:
+```
+
+To index repositories already on the host, bind-mount them (read-only is fine) and add them as local repositories from the UI.
+
+## Binary on a Linux host
+
+Released binaries are self-contained — web UI embedded, a single file is enough:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/clement-tourriere/codebeam/main/install.sh | sh
 ```
 
-Or download an archive from the [releases page](https://github.com/clement-tourriere/codebeam/releases). To build from source instead, run `mise install && mise run build` from the repository root (produces `bin/codebeam`).
-
-## Install on a Linux host
-
-Make sure `git` (and optionally `universal-ctags`) is installed, then:
+(or download from the [releases page](https://github.com/clement-tourriere/codebeam/releases), or build with `mise run build`). Make sure `git` — and optionally `universal-ctags` — is installed, then set up directories for a dedicated user:
 
 ```sh
 sudo install -d -o codebeam -g codebeam /opt/codebeam
@@ -64,9 +90,9 @@ sudo chown root:codebeam /etc/codebeam/codebeam.env
 sudo chmod 0640 /etc/codebeam/codebeam.env
 ```
 
-## systemd unit
+### systemd unit
 
-Create `/etc/systemd/system/codebeam.service`:
+`/etc/systemd/system/codebeam.service`:
 
 ```ini
 [Unit]
@@ -91,17 +117,15 @@ ReadWritePaths=/var/lib/codebeam
 WantedBy=multi-user.target
 ```
 
-Start it:
-
 ```sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now codebeam
 sudo journalctl -u codebeam -f
 ```
 
-## Reverse proxy examples
+## Reverse proxy
 
-### Caddy
+**Caddy** (automatic HTTPS):
 
 ```text
 codebeam.example.com {
@@ -109,7 +133,7 @@ codebeam.example.com {
 }
 ```
 
-### Nginx
+**Nginx**:
 
 ```nginx
 server {
@@ -130,40 +154,9 @@ server {
 
 Set `CODEBEAM_BASE_URL=https://codebeam.example.com` and register OAuth callbacks with that same host.
 
-## Docker
-
-Multi-arch images (linux/amd64, linux/arm64) are published to GHCR on every release: `ghcr.io/clement-tourriere/codebeam` with `latest`, `X.Y`, and `X.Y.Z` tags. The image includes `git` and Universal Ctags, listens on `:8080`, and uses **two volumes**:
-
-- `/data` — SQLite database, cloned repos, and search indexes (`CODEBEAM_DATA_DIR`).
-- `/config` — the auto-generated token-encryption key, deliberately separate from `/data` so a stolen data backup does not also carry the key. Persist both; losing `/config` makes stored code-host tokens unreadable (or set `CODEBEAM_ENCRYPTION_KEY` explicitly instead).
-
-```yaml
-services:
-  codebeam:
-    image: ghcr.io/clement-tourriere/codebeam:latest
-    restart: unless-stopped
-    environment:
-      CODEBEAM_BASE_URL: "https://codebeam.example.com"
-      CODEBEAM_SESSION_SECRET: "replace-with-a-long-random-value"
-      CODEBEAM_DEV_LOGIN: "false"
-      CODEBEAM_GITHUB_CLIENT_ID: "..."
-      CODEBEAM_GITHUB_CLIENT_SECRET: "..."
-    volumes:
-      - codebeam-data:/data
-      - codebeam-config:/config
-    ports:
-      - "127.0.0.1:8080:8080"
-
-volumes:
-  codebeam-data:
-  codebeam-config:
-```
-
-To index repositories already on the host, bind-mount them (read-only is fine for indexing) and add them as local repositories from the UI.
-
 ## Backups
 
-The safest backup is the complete `CODEBEAM_DATA_DIR` while Codebeam is stopped:
+The safest backup is the complete data directory while Codebeam is stopped:
 
 ```sh
 sudo systemctl stop codebeam
@@ -171,17 +164,13 @@ sudo tar -C /var/lib -czf codebeam-data-$(date +%F).tar.gz codebeam
 sudo systemctl start codebeam
 ```
 
-At minimum, back up `codebeam.db`; it contains the source of truth for users, tokens, repositories, and settings. Index shards can be rebuilt, but rebuilding may take time.
+At minimum, back up `codebeam.db` — it is the source of truth for users, tokens, repositories, and settings. Clones and index shards can be rebuilt, though rebuilding takes time.
 
-Code-host access tokens in the database are **encrypted at rest**, so a stolen data backup alone cannot use them — as long as the encryption key lives outside `CODEBEAM_DATA_DIR` (it does by default, and the systemd env file above keeps it in `/etc/codebeam`). The flip side: **back up the encryption key separately and securely.** If you lose it, the stored tokens are unrecoverable and every user must reconnect their code host. Never store the key inside the backed-up data directory, or a single stolen backup would contain both halves.
+Code-host tokens in the database are **encrypted at rest**, so a stolen data backup alone cannot use them — as long as the encryption key lives outside `CODEBEAM_DATA_DIR` (it does by default; the systemd setup above keeps it in `/etc/codebeam`). The flip side: **back up the key separately and securely.** Lose it and the stored tokens are unrecoverable — every user must reconnect their code host. Never store the key inside the backed-up data directory, or one stolen backup carries both halves.
 
 ## Upgrades
 
-With Docker, pull the new image tag and recreate the container. With the binary:
-
-1. Download the new release (or rerun the install script).
-2. Stop Codebeam, replace the binary, start Codebeam — the web assets are embedded, there is nothing else to copy.
-3. Watch logs for migration or indexing errors. On the first start after upgrading to a build with token encryption, any plaintext code-host tokens are encrypted in place automatically (a one-time, idempotent migration); reads keep working with no user action. This makes the token column one-way — an older binary without decryption support would read the encrypted values as invalid tokens.
+With Docker, pull the new tag and recreate the container. With the binary:
 
 ```sh
 sudo systemctl stop codebeam
@@ -189,3 +178,7 @@ sudo install -m 0755 codebeam /opt/codebeam/codebeam
 sudo systemctl start codebeam
 sudo journalctl -u codebeam -f
 ```
+
+Web assets are embedded, so replacing the binary is the whole upgrade. Watch the logs for migration errors on first start. When upgrading from a build without token encryption, any plaintext code-host tokens are encrypted in place automatically (a one-time, idempotent migration) — note this makes the token column one-way; an older binary can no longer read those values.
+
+Check the running version any time with `codebeam version`.

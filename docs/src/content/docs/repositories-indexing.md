@@ -1,126 +1,99 @@
 ---
 title: Repositories and indexing
-description: Add repositories, choose branches, build indexes, and keep search fresh.
+description: Add repositories from any source, control which branches are indexed, and let Codebeam keep everything fresh.
 ---
 
-Codebeam searches repositories that have been added, selected, and indexed. The repository list and index jobs are managed from `/sources` and `/repos/manage`.
+Codebeam searches what it has indexed. This page covers the full lifecycle: adding repositories, choosing branches, monitoring index jobs, and the automatic freshness machinery that means you rarely think about any of it.
 
-## Supported repository sources
+## Where repositories come from
 
-| Source | How to add | Notes |
+Repositories enter Codebeam through the **Sources** page (`/sources`):
+
+| Source | Setup needed | Good for |
 | --- | --- | --- |
-| Local repository | `/sources` → **Add a local repository** | Points at a repository already present on the Codebeam machine. |
-| Public GitHub repository | `/sources` → **Add a public GitHub repository** | No OAuth or token required. |
-| GitHub OAuth | Configure OAuth, connect from `/sources`, then sync. | Best for shared GitHub login and private repo sync. |
-| GitHub PAT | Paste token in `/sources`. | Per-user alternative to OAuth. |
-| GitLab.com OAuth | Configure OAuth, connect from `/sources`, then sync. | Uses `CODEBEAM_GITLAB_BASE_URL=https://gitlab.com`. |
-| Self-managed GitLab PAT | Enter instance URL and token in `/sources`. | Supports multiple self-managed instances per user. |
-| Self-managed GitLab OAuth | Set `CODEBEAM_GITLAB_BASE_URL` and OAuth credentials. | Supports one app-wide GitLab OAuth host. |
+| Local path | None *(admin)* | Code already on the machine — searched live, including uncommitted changes. |
+| Public GitHub repo | None | Any public project — paste `owner/name` or a URL. |
+| GitHub personal access token | A token | Your private GitHub repos, without configuring OAuth. |
+| GitHub / GitLab OAuth | An OAuth app ([setup](/codebeam/oauth/)) | Shared instances — each user connects their own account. |
+| Self-managed GitLab token | Instance URL + token | Company GitLab instances; several can be connected side by side. |
 
-## Repository lifecycle
+Local paths and public GitHub repositories are indexed as soon as you add them. Connected code hosts work differently: Codebeam **syncs** the list of repositories your account can access, and you then choose which ones to actually index.
 
-1. **Connect a source** from `/sources`.
-2. **Sync repositories** if the source is OAuth or token based.
-3. **Select repositories** from `/repos/manage`.
-4. **Index** selected repositories.
-5. Search on `/search` or through the API/MCP tools.
-6. Remove an entire source from `/sources` when you want to delete its saved connection, repository records, index jobs, indexes, and Codebeam-managed clones.
+Removing a source removes everything it brought in — its repositories, indexes, jobs, and Codebeam-managed clones. Removing a local source never touches the original repository on disk.
 
-Index jobs move through queued, running, succeeded, failed, or cancelled states. Failed jobs show the last index error in the UI. Removing a local source does not delete the original repositories on disk.
+## Managing repositories
 
-## Branch indexing
+**Manage repositories** (`/repos/manage`) is the control room. Each repository has an **On/Off** switch: turning it on clones (if remote) and indexes it; turning it off removes its index shards and stops all background refreshing.
 
-Remote repositories can index one, many, or all branches.
+Working at scale:
 
-- Leave the branch field empty to index the code host's default branch.
-- Enter comma-separated branch names or glob patterns to include branches:
+- **Status chips** filter the list to `indexed`, `indexing`, `stale`, `failed`, or `off`, with live counts.
+- **Bulk actions** activate or deactivate the checked repositories — or *everything matching the current filter*, so "turn on all Go repositories from GitLab" is two clicks.
+- Each source card also has an **activate all / deactivate all** toggle.
+- Clicking a repository opens a **detail panel** with its branches, last index result, and per-repo actions (reindex, edit branches, cancel a running job).
 
-```text
-main,release/*,feature/search
-```
+Index jobs run in the background and the page polls them live — queued, running, then succeeded, failed, or cancelled. A failed job shows its error message right on the repository.
 
-- Use `*` or `all` to index every remote branch.
-- Prefix a name or pattern with `!` to exclude it:
+## Choosing branches
+
+By default, a remote repository indexes its default branch. The branch policy (in the repository's detail panel, or when adding a public repo) accepts a comma-separated list of names and glob patterns:
 
 ```text
-*,!wip/*,!dependabot/*
+main, release/*
 ```
 
-On each successful index, Codebeam stores the actual resolved branch names. Deleted remote branches disappear from search after the next refresh because the repo shard is rebuilt from the current branch list. If a branch explicitly named in the policy is missing, the index job fails and the repo is marked as needing reindex rather than silently serving stale data.
+- `*` or `all` indexes every branch.
+- `!pattern` excludes branches: `*, !wip/*, !dependabot/*`.
 
-### Branch limit
+All indexed branches of a repository share one index shard — Zoekt stores identical files once — so indexing several branches is much cheaper than it sounds. Search results then support `branch:` filtering, and equivalent matches across branches collapse into a single result with branch badges.
 
-When a pattern like `*` matches more branches than the configured limit (`CODEBEAM_MAX_INDEXED_BRANCHES`, editable on the Settings → Indexing tab), Codebeam indexes only the most recently updated branches instead of cloning and indexing every branch — the default branch is always kept. Ranking uses a metadata-only fetch of branch tips, so it stays fast even on repositories with thousands of branches.
+Local repositories always index the checked-out working tree — whatever branch you're on is what search sees.
 
-The limit defaults to `20` and can be changed by an admin on the Settings → Indexing tab (or via the environment variable). The search index (Zoekt) stores branch membership in a 64-bit mask, so **at most 64 branches per repository** can be indexed — `0` or values above 64 mean that maximum. If a selection of *explicitly named* branches exceeds the limit, the index job fails with a clear error rather than silently dropping branches you asked for by name; patterns are truncated by recency instead.
+:::note[Branch limits]
+When a pattern like `*` matches many branches, Codebeam keeps the most recently updated ones up to a limit (default 20, configurable on **Settings → Indexing**; the default branch is always kept). The index format supports at most 64 branches per repository. If you *explicitly name* more branches than the limit, the job fails with a clear error instead of silently dropping some — only patterns are truncated by recency.
+:::
 
-### Repositories you can't access
+If a branch named in the policy disappears from the remote, the index job fails and the repository is marked for reindexing, rather than quietly serving stale data.
 
-If a remote index run fails with an access or permission error — for example a GitLab project your token can no longer read — Codebeam deselects the repository so the background refresher stops retrying it every cycle, and records why on the repository. Re-select it to retry once access is restored. Turn this off with the "Automatically exclude repositories that fail with an access error" toggle on the Settings → Indexing tab (or `CODEBEAM_AUTO_EXCLUDE_INACCESSIBLE=false`).
+## Staying fresh
 
-Search supports branch filtering through the web UI facets and query controls. The JSON API accepts a `branch` parameter. Equivalent hits across branches are deduplicated in search results and displayed as branch-location badges with a `+N` overflow.
+You should almost never need the reindex button. Two mechanisms keep the index current:
 
-## Local repository freshness
+### Local repositories: watched live
 
-Selected local repositories are watched by default. When files change on disk, Codebeam queues a debounced background reindex.
+Codebeam watches selected local repositories with a filesystem watcher. Save a file, and a debounced reindex runs within seconds — search reflects your editor, not your last commit. Matches from files with uncommitted changes carry a `dirty` badge so you can tell.
 
-Disable local watching with:
+Disable with `CODEBEAM_WATCH_LOCAL_REPOS=false` if you'd rather reindex manually.
 
-```dotenv
-CODEBEAM_WATCH_LOCAL_REPOS=false
-```
+### Remote repositories: refreshed on a schedule
 
-Search results for local repositories can show a `dirty` badge when the matching file has uncommitted working-tree changes.
+A background scheduler re-pulls and re-indexes any selected remote repository whose last index is older than the refresh interval (default 30 minutes). It also picks up newly selected repositories, and naturally backs off ones that recently failed. Private repositories fetch with the token of a user who has access; public ones need no token at all.
 
-## Remote repository freshness
-
-Selected remote repositories are periodically re-pulled and reindexed by the remote auto-index scheduler. This keeps GitHub, GitLab.com, and self-managed GitLab repositories fresh without webhooks.
-
-Defaults:
+Tune it on **Settings → Indexing** or via environment variables:
 
 ```dotenv
 CODEBEAM_AUTO_INDEX_REMOTE=true
 CODEBEAM_REMOTE_REFRESH_INTERVAL=30m
 ```
 
-You can also change remote auto-indexing from `/settings`. Environment values are used as defaults until settings are saved.
+:::tip[Repositories you lose access to]
+If a remote repository fails to index with an access or permission error — say, a GitLab project your token can no longer read — Codebeam deselects it so the scheduler stops retrying every cycle, and records why. Re-select it once access is restored. Disable this behavior on **Settings → Indexing** (`CODEBEAM_AUTO_EXCLUDE_INACCESSIBLE=false`).
+:::
 
-## Symbol indexing
+## What gets indexed
 
-Symbol search uses Universal Ctags during indexing. Without Universal Ctags, Codebeam still performs normal text search, but symbol-only search will not return definitions.
+- Files up to **2 MiB**; larger files are skipped.
+- Dependency and build directories are skipped: `.git`, `node_modules`, `target`, `dist`, `build`, `.venv`, `.cache`, and similar.
+- If **Universal Ctags** is available, symbols (functions, types, classes…) are extracted during indexing — this is what powers symbol search and the file outline. Codebeam finds ctags automatically on `PATH`; point `CODEBEAM_CTAGS_PATH` at a binary if needed (note: macOS's built-in `/usr/bin/ctags` is BSD ctags and won't work — `brew install universal-ctags`). Repositories indexed *before* ctags was installed need one reindex to gain symbols.
 
-Install Universal Ctags and point Codebeam at it if auto-detection does not find it.
+Indexing concurrency adapts to the machine (up to 4 repositories at once, bounded by CPU). See [Configuration](/codebeam/configuration/#indexing-and-freshness) for the knobs.
 
-On macOS with Homebrew:
+## Disk and backups
 
-```sh
-brew install universal-ctags
-export CODEBEAM_CTAGS_PATH="$(brew --prefix universal-ctags)/bin/ctags"
-mise run dev
-```
+Everything lives under the data directory (default `.codebeam/`):
 
-Then reindex repositories so Zoekt shards include symbols.
+- `codebeam.db` — the source of truth: users, tokens, repositories, permissions, settings. **Back this up.**
+- `repos/` — clones of remote repositories. Re-fetchable, but keeping them speeds recovery.
+- `index/` — Zoekt shards. Rebuildable by reindexing; can be large.
 
-Codebeam checks `CODEBEAM_CTAGS_PATH` first, then `CTAGS_COMMAND`, then common binaries such as `universal-ctags` and `ctags` on `PATH`. macOS `/usr/bin/ctags` is BSD ctags and is not sufficient.
-
-## Search filters after indexing
-
-The web UI and `/api/search` expose filters for:
-
-- repository (`repo`)
-- branch (`branch`)
-- path (`path` and top-level path)
-- extension and language (`ext`, `lang`)
-- source/provider
-- dirty or fresh results
-- symbol kind
-- sort order
-
-Zoekt query syntax is also available for literal and regex search.
-
-## Disk and backup notes
-
-- The SQLite database stores repository metadata, permissions, identities, and tokens.
-- Remote clones under `CODEBEAM_REPO_DIR` can often be re-fetched, but keeping them speeds recovery.
-- Zoekt shards under `CODEBEAM_INDEX_DIR` can be rebuilt by reindexing, but they may be large.
-- For the safest backup, snapshot the full `CODEBEAM_DATA_DIR` while Codebeam is stopped.
+The safest backup is a snapshot of the whole data directory while Codebeam is stopped. See [Deployment → Backups](/codebeam/deployment/#backups) for the encryption-key caveat.

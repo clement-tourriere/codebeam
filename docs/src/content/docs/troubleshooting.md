@@ -1,96 +1,98 @@
 ---
 title: Troubleshooting
-description: Common setup, OAuth, indexing, search, and deployment problems.
+description: Common setup, sign-in, indexing, search, and deployment problems — and their fixes.
 ---
 
 ## Quick checks
 
-Start with these checks before debugging a specific feature:
+Before debugging a specific feature:
 
 ```sh
+# Which version is running, and is it the right binary?
+codebeam version
+which codebeam
+
 # Is the server reachable?
 curl -I http://localhost:8080/login
 
-# Did the generated frontend assets exist?
-ls static/app.css static/htmx.min.js
+# Is git available? (required)
+git --version
 
-# Can Go tests pass?
-go test ./...
-
-# Is Universal Ctags available for symbol indexing?
+# Is Universal Ctags available? (needed for symbol search)
 universal-ctags --version || ctags --version
 ```
 
-If you run under systemd, watch logs with:
-
-```sh
-sudo journalctl -u codebeam -f
-```
+Under systemd, watch logs with `sudo journalctl -u codebeam -f`; with Docker, `docker logs -f codebeam`.
 
 ## Setup and startup
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Page loads without styling | `static/app.css` was not generated or `CODEBEAM_STATIC_DIR` points to the wrong directory. | Run `mise run css:build` or `mise run build`; verify `CODEBEAM_STATIC_DIR`. |
-| Server fails to parse templates | `CODEBEAM_TEMPLATE_GLOB` is wrong or shell-expanded too early. | Use an absolute glob such as `CODEBEAM_TEMPLATE_GLOB=/opt/codebeam/templates/*.html`; quote it in interactive shells. |
-| `.env` changes are ignored | The binary was run directly, not through mise, or the process was not restarted. | Export variables manually or use an environment file; restart Codebeam. |
 | Address already in use | Another process listens on port 8080. | Set `CODEBEAM_ADDR=127.0.0.1:8081` or stop the other process. |
-| Cannot create `.codebeam` directories | The process user cannot write to the working directory or data path. | Set `CODEBEAM_DATA_DIR` to a writable path and fix ownership. |
+| Cannot create `.codebeam` directories | The process user can't write to the working directory. | Set `CODEBEAM_DATA_DIR` to a writable path and fix ownership. |
+| `.env` changes are ignored | The process wasn't restarted, or the binary was run outside mise. | Restart Codebeam; when not using mise, export the variables or use an environment file. |
+| Page loads without styling (source checkout) | Frontend assets not built, or `CODEBEAM_STATIC_DIR` wrong. | Run `mise run dev` (or `mise run build`); check `CODEBEAM_STATIC_DIR`. |
+| Server fails to parse templates (source checkout) | `CODEBEAM_TEMPLATE_GLOB` wrong or shell-expanded. | Use an absolute, quoted glob such as `'/opt/codebeam/templates/*.html'`. |
 
-## Login and OAuth
-
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Development login is visible on a shared instance | `CODEBEAM_DEV_LOGIN` is unset or true. | Set `CODEBEAM_DEV_LOGIN=false` and restart. |
-| GitHub/GitLab OAuth button is disabled | Client ID or secret is empty. | Set both env vars and restart. |
-| Redirect URI mismatch | Provider callback does not match Codebeam's generated callback. | Register `<CODEBEAM_BASE_URL>/auth/<provider>/callback`. |
-| OAuth callback says invalid state | Cookie mismatch, blocked cookies, or callback handled by a different instance. | Allow cookies and make sure the same instance handles start and callback. |
-| OAuth works locally but not behind proxy | `CODEBEAM_BASE_URL` still points to `localhost` or HTTP. | Set it to the external HTTPS URL. |
-| Private repos are missing after sync | Token/OAuth scopes or user permissions are insufficient. | Check GitHub `repo`/fine-grained read access or GitLab `read_api` + `read_repository`. |
-
-## Repository sync and indexing
+## Sign-in and OAuth
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Public GitHub repo cannot be added | URL is not a GitHub repository or the repo is private. | Use `owner/name` or connect GitHub with OAuth/PAT for private repos. |
-| Index job fails during clone/fetch | Network, credentials, or repository access problem. | Check the job error, token scopes, and server network access to the code host. |
-| Search returns no results for a repo | Repo is not selected, was not indexed, or index failed. | Go to `/repos/manage`, select it, and run indexing. |
-| Branch filter returns no results | That branch was not indexed. | Add the branch in Manage repositories and reindex. |
-| Local changes are not reflected | Local watcher disabled or repo not selected. | Ensure `CODEBEAM_WATCH_LOCAL_REPOS=true`, repo is selected, and watch logs. |
-| Remote repos are stale | Auto-index disabled or interval too long. | Check `/settings` and `CODEBEAM_REMOTE_REFRESH_INTERVAL`. |
+| Development login shows on a shared instance | `CODEBEAM_DEV_LOGIN` explicitly set to true. | Set `CODEBEAM_DEV_LOGIN=false` and restart (it is off by default for non-localhost base URLs). |
+| OAuth/SSO button missing or disabled | Client ID or secret empty. | Set both variables and restart. |
+| Redirect URI mismatch | Provider callback ≠ Codebeam's generated callback. | Register exactly `<CODEBEAM_BASE_URL>/auth/<provider>/callback`. |
+| Invalid OAuth state on callback | Blocked cookies, or another instance handled the callback. | Allow cookies; make sure one instance handles start and callback. |
+| Works locally, fails behind a proxy | `CODEBEAM_BASE_URL` still `localhost` or HTTP. | Set it to the external HTTPS URL. |
+| Private repos missing after sync | Insufficient token/OAuth scopes, or no access. | GitHub: `repo` scope (or fine-grained contents+metadata read). GitLab: `read_api` + `read_repository`. |
 
-## Symbol search
+## Repositories and indexing
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Symbol-only search returns no matches | Universal Ctags was missing when the repo was indexed. | Install Universal Ctags, set `CODEBEAM_CTAGS_PATH` if needed, restart, and reindex. |
-| macOS has `ctags` but symbols still fail | `/usr/bin/ctags` is BSD ctags, not Universal Ctags. | `brew install universal-ctags` and set `CODEBEAM_CTAGS_PATH="$(brew --prefix universal-ctags)/bin/ctags"`. |
-| Some languages have fewer symbols | Ctags support varies by language and parser. | Use text search or `find_references` as a fallback. |
+| Public GitHub repo can't be added | Not a GitHub URL, or the repo is private. | Use `owner/name`; connect GitHub OAuth/PAT for private repos. |
+| Index job fails during clone/fetch | Network, credentials, or access problem. | Read the job's error in the repo panel; check token scopes and network reach. |
+| A repo returns no search results | Not selected, not yet indexed, or the job failed. | On `/repos/manage`, switch it On and check its status. |
+| Branch filter finds nothing | That branch isn't in the repo's branch policy. | Edit branches in the repo panel and reindex. |
+| Local edits not showing in search | Watcher disabled, or the repo isn't selected. | Ensure `CODEBEAM_WATCH_LOCAL_REPOS=true` and the repo is On. |
+| Remote repos go stale | Auto-indexing disabled or interval too long. | Check **Settings → Indexing** and `CODEBEAM_REMOTE_REFRESH_INTERVAL`. |
+| A repo keeps getting deselected | Auto-exclude after repeated access failures. | Fix the token/access, then re-select it; or disable auto-exclude on **Settings → Indexing**. |
+
+## Search
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Symbols-only search returns nothing | Universal Ctags missing when the repo was indexed. | Install Universal Ctags, set `CODEBEAM_CTAGS_PATH` if not auto-detected, restart, **reindex**. |
+| macOS has `ctags` but symbols still fail | `/usr/bin/ctags` is BSD ctags, not Universal. | `brew install universal-ctags`; Codebeam rejects BSD ctags on purpose. |
+| Some languages have few symbols | Ctags parser coverage varies per language. | Fall back to text search or find-references. |
+| Structural search rejects the language | Only 11 languages are bundled. | Use one of: bash, c, go, java, javascript, json, python, rust, tsx, typescript, yaml. |
+| Structural results flagged truncated | Search hit the time/file/match caps. | Narrow with repo/path filters, or raise the [structural limits](/codebeam/configuration/#structural-ast-search). |
+| Query behaves unexpectedly | Filter atoms or regex interpreted differently than intended. | Check the compiled-query badge under the search box; see [Searching](/codebeam/searching/). |
 
 ## API, MCP, and CLI
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `/api/search` redirects to login | HTTP API requires an authenticated browser session. | Log in first and send session cookies, or use the MCP/CLI tools locally. |
-| MCP shows no repositories | MCP process is reading a different data directory. | Set `CODEBEAM_DATA_DIR`, `CODEBEAM_DB_PATH`, or `CODEBEAM_INDEX_DIR` to match the web server. |
-| `codebeam ctx` returns weak context | Repositories are not indexed or filters are too narrow. | Reindex and relax `--repo`, `--path`, or `--lang` filters. |
+| `/api/*` or `/mcp` returns 401 | No valid credential on the request. | Send `Authorization: Bearer cbp_…` ([API token](/codebeam/oauth/#codebeam-api-tokens)), or let the MCP client run the OAuth flow. |
+| Token stopped working | Expired or revoked. | Check **Settings → API tokens** / **Connected agents**; create a new one. |
+| MCP (stdio) or `ctx` sees no repositories | The process reads a different data directory than the server. | Set the same `CODEBEAM_DATA_DIR` (or `CODEBEAM_DB_PATH`/`CODEBEAM_INDEX_DIR`) for the CLI/MCP invocation. |
+| `codebeam ctx` returns thin context | Repos not indexed, or filters too narrow. | Reindex; relax `--repo`, `--path`, `--lang`; raise `--max-files`/`--max-chars`. |
 
 ## Deployment
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| OAuth callback uses internal host/port | `CODEBEAM_BASE_URL` is set to the listen address instead of the public URL. | Use `https://codebeam.example.com`. |
-| Binary works in repo checkout but fails in `/opt` | Static assets/templates were not copied or env paths are wrong. | Copy `static/` and `templates/`, or set `CODEBEAM_STATIC_DIR` and `CODEBEAM_TEMPLATE_GLOB`. |
-| Data disappears after restart in a container | Data directory was not mounted as a persistent volume. | Mount a volume and set `CODEBEAM_DATA_DIR=/data`. |
-| Backups are incomplete | Only index shards were backed up. | Back up `codebeam.db` at minimum; preferably the full `CODEBEAM_DATA_DIR`. |
+| OAuth callback uses an internal host/port | `CODEBEAM_BASE_URL` set to the listen address. | Set it to the public URL, e.g. `https://codebeam.example.com`. |
+| Data gone after a container restart | No persistent volume. | Mount volumes for `/data` **and** `/config`. |
+| Code-host connections broken after restart (container) | The auto-generated encryption key wasn't persisted, so a new key was created. | Persist `/config`, or set `CODEBEAM_ENCRYPTION_KEY` explicitly; users must reconnect their code hosts once. |
+| Backups incomplete | Only index shards were saved. | Back up `codebeam.db` at minimum, ideally all of `CODEBEAM_DATA_DIR` — and the encryption key separately. |
 
-## Reset a local development instance
+## Reset a local instance
 
-To start over locally, stop Codebeam and remove the runtime data directory:
+To start over, stop Codebeam and delete the data directory:
 
 ```sh
 rm -rf .codebeam
-mise run dev
+codebeam
 ```
 
-This deletes users, tokens, repository metadata, clones, and indexes for the local checkout.
+This deletes users, tokens, repository metadata, clones, and indexes for that instance. Local source repositories on disk are untouched.

@@ -1,20 +1,21 @@
 ---
-title: Getting started
-description: Install Codebeam, sign in, add repositories, or run it from source.
+title: Get started
+description: Install Codebeam, add your first repository, and run your first search in five minutes.
 ---
 
-## Install a release
+This page takes you from nothing to your first search result. You need a machine with `git` installed — that's the only hard requirement.
 
-The fastest path is a released binary — it is fully self-contained (web UI assets embedded):
+## 1. Install
+
+**One-line install** (Linux and macOS, amd64/arm64):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/clement-tourriere/codebeam/main/install.sh | sh
-codebeam
 ```
 
-The script detects your OS/architecture (Linux and macOS, amd64/arm64), verifies the SHA-256 checksum, and installs to `/usr/local/bin` (or `~/.local/bin` when that is not writable; override with `CODEBEAM_INSTALL_DIR`, pin a version with `CODEBEAM_VERSION=v0.2.0`). Archives are also on the [releases page](https://github.com/clement-tourriere/codebeam/releases).
+The script downloads the release for your platform, verifies its SHA-256 checksum, and installs to `/usr/local/bin` (falling back to `~/.local/bin` when that isn't writable). The binary is fully self-contained — the web UI is embedded, so there is nothing else to download.
 
-Alternatively, run the Docker image — see [Deployment](/codebeam/deployment/):
+**Docker**, if you prefer containers:
 
 ```sh
 docker run -d --name codebeam -p 8080:8080 \
@@ -22,103 +23,82 @@ docker run -d --name codebeam -p 8080:8080 \
   ghcr.io/clement-tourriere/codebeam:latest
 ```
 
-### Runtime requirements
+You can also grab an archive from the [releases page](https://github.com/clement-tourriere/codebeam/releases), or [build from source](#run-from-source).
 
-- **`git` on `PATH` is required** — Codebeam shells out to it to clone, fetch, and read repositories. The Docker image ships it; for the binary install, install git through your package manager first.
-- Optional: [Universal Ctags](https://github.com/universal-ctags/ctags) enables symbol search.
+:::tip[Optional: symbol search]
+Install [Universal Ctags](https://github.com/universal-ctags/ctags) (`brew install universal-ctags` on macOS) to enable symbol search — finding *definitions* rather than every mention of a name. Codebeam detects it automatically; everything else works without it. The Docker image already includes it.
+:::
 
-The rest of this page covers running from source; skip to [step 2](#2-create-your-environment-file) if you installed a release.
+## 2. Start Codebeam
+
+```sh
+codebeam
+```
+
+Open <http://localhost:8080>. On the login page, click **Continue in development mode** — no password needed. This passwordless login is enabled automatically when Codebeam runs on localhost, and disabled automatically the moment you configure a real host, so a shared instance never ships an open door. The first user to sign in becomes the instance admin.
+
+Codebeam creates a `.codebeam/` directory in the working directory for its database, clones, and indexes. Set `CODEBEAM_DATA_DIR` to put it somewhere else — see [Configuration](/codebeam/configuration/).
+
+## 3. Add a repository
+
+Go to **Sources** (`/sources`). The two zero-setup options:
+
+- **A local repository** — enter the path to any git repository already on the machine, e.g. `~/work/my-app`. *(Admin only on shared instances, since it reads the server's disk.)*
+- **A public GitHub repository** — paste `owner/name` or a GitHub URL, e.g. `sourcegraph/zoekt`. No account or token needed.
+
+To index your **private repositories**, connect a code host: paste a GitHub personal access token directly on the Sources page, or set up [GitHub/GitLab OAuth or SSO](/codebeam/oauth/) for a shared instance.
+
+Public repositories and local paths are selected and indexed immediately when you add them. Repositories synced from a connected code host land on **Manage repositories** (`/repos/manage`), where you flip the ones you want to **On** — each one is cloned and indexed in the background, and you can watch the jobs live on the same page.
+
+## 4. Search
+
+Head to **Search** (`/search`) and type a query:
+
+```text
+parseConfig
+```
+
+Results appear with syntax highlighting, and you can narrow them with the filter sidebar (repository, language, path, branch…). Try a regex — queries are regex by default:
+
+```text
+func (\w+) Handler
+```
+
+Or flip on **Symbols only** to jump straight to a definition. Click any result to open the file in the code viewer, complete with a symbol outline and find-references links.
+
+That's the core loop. Two things now happen automatically:
+
+- **Local repositories stay live.** Codebeam watches them and re-indexes within seconds of a file save — search finds code you haven't committed yet, badged as `dirty`.
+- **Remote repositories stay fresh.** A scheduler re-pulls and re-indexes them every 30 minutes (configurable).
+
+## Where to next?
+
+- [Searching](/codebeam/searching/) — query syntax, symbol and structural search, filters, and the code viewer.
+- [Repositories and indexing](/codebeam/repositories-indexing/) — branch policies, freshness, and managing many repositories.
+- [AI agents and APIs](/codebeam/integrations/) — give Claude Code (or any MCP client) access to your index:
+
+  ```sh
+  claude mcp add codebeam -- codebeam mcp
+  ```
+
+- [Deployment](/codebeam/deployment/) — run Codebeam as a shared service for your team.
+
+---
 
 ## Run from source
 
-Codebeam is built with Go and a small Node-based asset pipeline.
-
-- [mise](https://mise.jdx.dev/) to install the pinned toolchain and run tasks.
-- Go `1.25.11` and Node `22` if you do not use mise.
-
-## 1. Clone and install
+Only needed if you want to hack on Codebeam itself. The repository uses [mise](https://mise.jdx.dev/) to pin the toolchain (Go, Node, and dev tools):
 
 ```sh
 git clone https://github.com/clement-tourriere/codebeam.git
 cd codebeam
 mise install
-```
-
-`mise install` reads `mise.toml` and installs the Go, Node, `hk`, `pkl`, and `commitizen` versions used by this repository.
-
-## 2. Create your environment file
-
-```sh
-cp .env.example .env
-$EDITOR .env
-```
-
-For a first local run, this is enough:
-
-```dotenv
-CODEBEAM_BASE_URL=http://localhost:8080
-```
-
-OAuth settings can stay empty until you want to connect private GitHub/GitLab repositories through OAuth. You can still add public GitHub repositories or sign in locally.
-
-## 3. Start the web server
-
-```sh
 mise run dev
 ```
 
-This task:
+`mise run dev` installs frontend npm dependencies if missing, builds the Tailwind/DaisyUI CSS, and runs `go run ./cmd/codebeam`. Copy `.env.example` to `.env` for local configuration — mise loads it automatically.
 
-1. installs frontend npm dependencies if missing,
-2. builds Tailwind/DaisyUI CSS and copies HTMX into `static/`, and
-3. runs `go run ./cmd/codebeam`.
-
-Open <http://localhost:8080>.
-
-## 4. Sign in for the first time
-
-By default, local development login is enabled. On `/login`, click **Continue in development mode**.
-
-For a shared instance, disable development login and use OAuth instead:
-
-```dotenv
-CODEBEAM_DEV_LOGIN=false
-CODEBEAM_SESSION_SECRET=replace-with-a-long-random-secret
-```
-
-Code-host access tokens are encrypted at rest automatically. If you don't set `CODEBEAM_ENCRYPTION_KEY`, Codebeam generates a key on first run, stores it outside the data directory (under your user config dir), and reuses it on restart; in containers, set the key explicitly so it survives restarts.
-
-See [Configuration](/codebeam/configuration/) and [OAuth and tokens](/codebeam/oauth/) before exposing Codebeam to other users.
-
-## 5. Add and index repositories
-
-Go to `/sources` and choose one of these paths:
-
-- **Public GitHub repository**: paste `owner/name` or a GitHub URL. No OAuth is required.
-- **GitHub token**: paste a personal access token to sync private or internal repositories without app-wide OAuth variables.
-- **GitHub/GitLab OAuth**: configure the provider in `.env`, restart Codebeam, then connect from `/sources`.
-- **Self-managed GitLab token**: enter the instance URL and a token with `read_api` and `read_repository`.
-- **Local repository**: add an absolute or relative path to a repository already on the machine.
-
-Then visit `/repos/manage`, select repositories, and start indexing. Search results appear on `/search` after indexes are built.
-
-## Build a binary
-
-```sh
-mise run build
-```
-
-The binary is written to `bin/codebeam`. It embeds the web UI assets that exist at build time (the task builds the CSS first), so it can run from any directory. When the working directory contains `static/` and `templates/` — such as the repository root — those on-disk copies take precedence, which is what makes `mise run dev` pick up template edits. To point at assets elsewhere:
-
-```sh
-CODEBEAM_STATIC_DIR=/opt/codebeam/static \
-CODEBEAM_TEMPLATE_GLOB='/opt/codebeam/templates/*.html' \
-/opt/codebeam/bin/codebeam
-```
-
-## Without mise
-
-If you do not use mise, install Go and Node manually, then run:
+Without mise, install Go and Node yourself, then:
 
 ```sh
 npm --prefix frontend install
@@ -126,23 +106,19 @@ npm --prefix frontend run build
 go run ./cmd/codebeam
 ```
 
-For tests:
+`mise run build` produces a self-contained binary at `bin/codebeam` with the web assets embedded. When the working directory contains `static/` and `templates/` (such as the repository root), those on-disk copies take precedence over the embedded ones — which is what makes `mise run dev` pick up template edits. Point at assets elsewhere with `CODEBEAM_STATIC_DIR` and `CODEBEAM_TEMPLATE_GLOB`.
 
-```sh
-go test ./...
-```
+Run tests with `go test ./...`.
 
 ## Data created on first run
 
-By default, Codebeam creates `.codebeam/` in the working directory:
-
 ```text
 .codebeam/
-├── codebeam.db    # SQLite metadata: users, identities, repos, jobs, settings (code-host tokens encrypted at rest)
-├── index/         # Zoekt shards
-└── repos/         # managed remote clones
+├── codebeam.db    # SQLite: users, identities, repositories, permissions, jobs, settings
+├── index/         # Zoekt search index shards
+└── repos/         # clones of remote repositories
 ```
 
-Move this directory with `CODEBEAM_DATA_DIR`, or override individual paths with `CODEBEAM_DB_PATH`, `CODEBEAM_REPO_DIR`, and `CODEBEAM_INDEX_DIR`.
+Relocate everything with `CODEBEAM_DATA_DIR`, or override individual paths with `CODEBEAM_DB_PATH`, `CODEBEAM_REPO_DIR`, and `CODEBEAM_INDEX_DIR`.
 
-The token-encryption key is deliberately **not** stored here. Unless you set `CODEBEAM_ENCRYPTION_KEY` or `CODEBEAM_ENCRYPTION_KEY_FILE`, it is written to `<user config dir>/codebeam/encryption.key` on first run — outside the data directory, so backing up `.codebeam/` never captures the key.
+One thing deliberately does **not** live here: the key used to encrypt code-host tokens at rest. It is auto-generated into `<user config dir>/codebeam/encryption.key` on first run — outside the data directory, so a backup of `.codebeam/` never carries the key with it. See [Configuration](/codebeam/configuration/#server-and-authentication) for the details.

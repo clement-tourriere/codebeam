@@ -8,7 +8,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Codebeam',
-      description: 'Setup and operations documentation for Codebeam instances.',
+      description:
+        'Self-hosted code search for you and your AI agents — one binary, always fresh, from laptop to team server.',
       social: [
         {
           icon: 'github',
@@ -20,23 +21,24 @@ export default defineConfig({
         {
           label: 'Start here',
           items: [
-            { label: 'Overview', slug: '' },
-            { label: 'Getting started', slug: 'getting-started' },
-            { label: 'Configuration', slug: 'configuration' },
-          ],
-        },
-        {
-          label: 'Instance setup',
-          items: [
-            { label: 'OAuth and tokens', slug: 'oauth' },
-            { label: 'Repositories and indexing', slug: 'repositories-indexing' },
-            { label: 'Deployment', slug: 'deployment' },
+            { label: 'What is Codebeam?', slug: '' },
+            { label: 'Get started', slug: 'getting-started' },
           ],
         },
         {
           label: 'Use Codebeam',
           items: [
-            { label: 'Integrations and APIs', slug: 'integrations' },
+            { label: 'Searching', slug: 'searching' },
+            { label: 'Repositories and indexing', slug: 'repositories-indexing' },
+            { label: 'AI agents and APIs', slug: 'integrations' },
+          ],
+        },
+        {
+          label: 'Run an instance',
+          items: [
+            { label: 'Authentication and access', slug: 'oauth' },
+            { label: 'Configuration', slug: 'configuration' },
+            { label: 'Deployment', slug: 'deployment' },
             { label: 'Troubleshooting', slug: 'troubleshooting' },
           ],
         },
