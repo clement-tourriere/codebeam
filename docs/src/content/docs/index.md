@@ -19,17 +19,17 @@ A running Codebeam instance has four main pieces:
 | Zoekt index shards | Search indexes built from selected repositories and branches. | `.codebeam/index/` |
 
 :::caution[Protect the data directory]
-The SQLite database holds users, repositories, and settings. Code-host access tokens are encrypted at rest (with a key kept outside the data directory) and Codebeam's own issued tokens are stored only as hashes, but you should still restrict filesystem access to `CODEBEAM_DATA_DIR`, back it up carefully, and never commit it. See [Configuration](/configuration/) for the encryption key.
+The SQLite database holds users, repositories, and settings. Code-host access tokens are encrypted at rest (with a key kept outside the data directory) and Codebeam's own issued tokens are stored only as hashes, but you should still restrict filesystem access to `CODEBEAM_DATA_DIR`, back it up carefully, and never commit it. See [Configuration](/codebeam/configuration/) for the encryption key.
 :::
 
 ## Recommended setup path
 
-1. [Get started locally](/getting-started/) with `mise run dev`.
-2. [Review configuration](/configuration/) and create a `.env` file.
-3. [Configure OAuth or tokens](/oauth/) for GitHub, GitLab, or self-managed GitLab.
-4. [Add repositories and indexing rules](/repositories-indexing/).
-5. For a shared instance, [deploy the binary behind HTTPS](/deployment/) and disable development login.
-6. Connect agents and tools with the [MCP server, JSON API, CLI, or VS Code extension](/integrations/).
+1. [Get started locally](/codebeam/getting-started/) with `mise run dev`.
+2. [Review configuration](/codebeam/configuration/) and create a `.env` file.
+3. [Configure OAuth or tokens](/codebeam/oauth/) for GitHub, GitLab, or self-managed GitLab.
+4. [Add repositories and indexing rules](/codebeam/repositories-indexing/).
+5. For a shared instance, [deploy the binary behind HTTPS](/codebeam/deployment/) and disable development login.
+6. Connect agents and tools with the [MCP server, JSON API, CLI, or VS Code extension](/codebeam/integrations/).
 
 ## Local vs shared instances
 

@@ -1,0 +1,10 @@
+[tool.commitizen]
+name = "cz_conventional_commits"
+# The git tags are the single source of truth for the version; the binary gets
+# it injected at build time via -ldflags, so no version file needs bumping.
+version_provider = "scm"
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_incremental = true
+# Pre-1.0: breaking changes bump the minor version, not the major.
+major_version_zero = true

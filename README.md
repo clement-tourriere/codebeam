@@ -2,20 +2,41 @@
 
 Codebeam is a local-first Sourcegraph-style code search prototype backed by Zoekt.
 
+## Install
+
+Released binaries are fully self-contained (web UI assets included). Pick one:
+
+**Install script** (Linux and macOS, amd64/arm64):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/clement-tourriere/codebeam/main/install.sh | sh
+codebeam            # web UI on http://localhost:8080
+```
+
+**Docker**:
+
+```sh
+docker run -d --name codebeam -p 8080:8080 \
+  -v codebeam-data:/data -v codebeam-config:/config \
+  ghcr.io/clement-tourriere/codebeam:latest
+```
+
+**Runtime requirements**: `git` must be on `PATH` — Codebeam shells out to it to clone, fetch, and read repositories (the Docker image ships it). [Universal Ctags](https://github.com/universal-ctags/ctags) is optional and enables symbol search.
+
+Binaries for each platform are also on the [releases page](https://github.com/clement-tourriere/codebeam/releases).
+
 ## Documentation
 
-The setup and operations docs live in the Astro Starlight site under `docs/`:
+The full setup and operations documentation is published at **<https://clement-tourriere.github.io/codebeam/>** (OAuth, environment variables, indexing, integrations, deployment). It lives in the Astro Starlight site under `docs/`:
 
 ```sh
 mise run docs:dev
 mise run docs:build
 ```
 
-Start with the [Codebeam instance guide](docs/src/content/docs/index.md) for OAuth, environment variables, indexing, integrations, and deployment notes.
+## Develop
 
-## Requirements
-
-Use `mise` to install the runtime toolchain and run the app. The dev task installs missing frontend npm dependencies automatically:
+Use `mise` to install the pinned toolchain and run the app. The dev task installs missing frontend npm dependencies automatically:
 
 ```sh
 mise install
@@ -167,3 +188,17 @@ mise run wasm:build
 ## VS Code Extension
 
 The extension scaffold lives in `extensions/vscode`. It adds `Codebeam: Search Selection` and opens the selected text in the configured Codebeam instance.
+
+## Releasing
+
+Versioning follows [Conventional Commits](https://www.conventionalcommits.org/) via [commitizen](https://commitizen-tools.github.io/commitizen/) (installed by `mise install`). Git tags are the single source of truth for the version — the binary gets it injected at build time.
+
+```sh
+mise run release
+```
+
+This runs `cz bump` (computes the next semver from the commit history, updates `CHANGELOG.md`, creates the `vX.Y.Z` tag) and pushes with `--follow-tags`. The pushed tag triggers the release workflow, which:
+
+- cross-compiles self-contained binaries for linux/darwin × amd64/arm64 with the version injected,
+- publishes them (plus SHA-256 checksums) as a GitHub Release with generated notes, and
+- builds and pushes the multi-arch Docker image to `ghcr.io/clement-tourriere/codebeam` (`latest`, `X.Y`, `X.Y.Z`).

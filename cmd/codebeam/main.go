@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,11 +14,22 @@ import (
 	"github.com/ctourriere/codebeam/internal/config"
 	"github.com/ctourriere/codebeam/internal/indexer"
 	"github.com/ctourriere/codebeam/internal/scheduler"
+	"github.com/ctourriere/codebeam/internal/version"
 	"github.com/ctourriere/codebeam/internal/watcher"
 	"github.com/ctourriere/codebeam/internal/web"
 )
 
 func main() {
+	// Handled before anything else so `codebeam version` never touches the
+	// filesystem or requires a valid configuration.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version", "-v":
+			fmt.Println("codebeam " + version.Version)
+			return
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

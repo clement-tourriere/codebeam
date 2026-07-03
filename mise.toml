@@ -3,6 +3,11 @@ go = "1.25.11"
 hk = "latest"
 node = "22"
 pkl = "latest"
+uv = "latest"
+"pipx:commitizen" = "latest"
+
+[settings]
+pipx.uvx = true
 
 [env]
 _.file = ".env"
@@ -52,3 +57,10 @@ run = "npm --prefix docs run dev"
 description = "Build the Astro Starlight documentation site"
 depends = ["docs:install"]
 run = "npm --prefix docs run build"
+
+[tasks.release]
+description = "Cut a release: cz bump computes the next version from conventional commits, tags it, and the pushed tag triggers the release workflow"
+run = [
+  "cz bump",
+  "git push --follow-tags origin HEAD",
+]

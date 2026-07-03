@@ -1,26 +1,50 @@
 ---
 title: Getting started
-description: Run Codebeam locally, sign in, add repositories, and build a binary.
+description: Install Codebeam, sign in, add repositories, or run it from source.
 ---
 
-## Prerequisites
+## Install a release
+
+The fastest path is a released binary — it is fully self-contained (web UI assets embedded):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/clement-tourriere/codebeam/main/install.sh | sh
+codebeam
+```
+
+The script detects your OS/architecture (Linux and macOS, amd64/arm64), verifies the SHA-256 checksum, and installs to `/usr/local/bin` (or `~/.local/bin` when that is not writable; override with `CODEBEAM_INSTALL_DIR`, pin a version with `CODEBEAM_VERSION=v0.2.0`). Archives are also on the [releases page](https://github.com/clement-tourriere/codebeam/releases).
+
+Alternatively, run the Docker image — see [Deployment](/codebeam/deployment/):
+
+```sh
+docker run -d --name codebeam -p 8080:8080 \
+  -v codebeam-data:/data -v codebeam-config:/config \
+  ghcr.io/clement-tourriere/codebeam:latest
+```
+
+### Runtime requirements
+
+- **`git` on `PATH` is required** — Codebeam shells out to it to clone, fetch, and read repositories. The Docker image ships it; for the binary install, install git through your package manager first.
+- Optional: [Universal Ctags](https://github.com/universal-ctags/ctags) enables symbol search.
+
+The rest of this page covers running from source; skip to [step 2](#2-create-your-environment-file) if you installed a release.
+
+## Run from source
 
 Codebeam is built with Go and a small Node-based asset pipeline.
 
 - [mise](https://mise.jdx.dev/) to install the pinned toolchain and run tasks.
 - Go `1.25.11` and Node `22` if you do not use mise.
-- `git` on `PATH` for cloning, fetching, and reading repositories.
-- Optional: [Universal Ctags](https://github.com/universal-ctags/ctags) for symbol search.
 
 ## 1. Clone and install
 
 ```sh
-git clone https://github.com/ctourriere/codebeam.git
+git clone https://github.com/clement-tourriere/codebeam.git
 cd codebeam
 mise install
 ```
 
-`mise install` reads `mise.toml` and installs the Go, Node, `hk`, and `pkl` versions used by this repository.
+`mise install` reads `mise.toml` and installs the Go, Node, `hk`, `pkl`, and `commitizen` versions used by this repository.
 
 ## 2. Create your environment file
 
@@ -64,7 +88,7 @@ CODEBEAM_SESSION_SECRET=replace-with-a-long-random-secret
 
 Code-host access tokens are encrypted at rest automatically. If you don't set `CODEBEAM_ENCRYPTION_KEY`, Codebeam generates a key on first run, stores it outside the data directory (under your user config dir), and reuses it on restart; in containers, set the key explicitly so it survives restarts.
 
-See [Configuration](/configuration/) and [OAuth and tokens](/oauth/) before exposing Codebeam to other users.
+See [Configuration](/codebeam/configuration/) and [OAuth and tokens](/codebeam/oauth/) before exposing Codebeam to other users.
 
 ## 5. Add and index repositories
 
@@ -84,13 +108,7 @@ Then visit `/repos/manage`, select repositories, and start indexing. Search resu
 mise run build
 ```
 
-The binary is written to `bin/codebeam`. Run it from the repository root so it can find the default `static/` and `templates/*.html` paths:
-
-```sh
-./bin/codebeam
-```
-
-If you run the binary from another directory, point it at the assets explicitly:
+The binary is written to `bin/codebeam`. It embeds the web UI assets that exist at build time (the task builds the CSS first), so it can run from any directory. When the working directory contains `static/` and `templates/` — such as the repository root — those on-disk copies take precedence, which is what makes `mise run dev` pick up template edits. To point at assets elsewhere:
 
 ```sh
 CODEBEAM_STATIC_DIR=/opt/codebeam/static \

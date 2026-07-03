@@ -1,9 +1,9 @@
 ---
 title: Deployment
-description: Run Codebeam as a shared service today and prepare for future Docker/container deployment.
+description: Run Codebeam as a shared service with Docker or a self-contained binary.
 ---
 
-Codebeam currently runs as a Go binary plus static assets and templates. A supported Docker image is not part of this repository yet, but the runtime contract is already simple: one process, one persistent data directory, and environment variables.
+Codebeam runs as a single process with a persistent data directory, configured through environment variables. Two supported deployment shapes: the official Docker image, or a self-contained release binary. Either way, `git` must be available at runtime — Codebeam shells out to it to clone, fetch, and read repositories (the Docker image includes it, plus Universal Ctags for symbol indexing).
 
 ## Production checklist
 
@@ -18,33 +18,26 @@ Before sharing an instance:
 - Configure OAuth callback URLs against the external URL.
 - Restrict filesystem permissions on the data directory and environment file.
 
-## Build the application
+## Get the binary
 
-From the repository root:
+Released binaries are self-contained — the web UI assets are embedded, so a single file is enough:
 
 ```sh
-mise install
-mise run build
+curl -fsSL https://raw.githubusercontent.com/clement-tourriere/codebeam/main/install.sh | sh
 ```
 
-This builds:
-
-- `bin/codebeam`
-- generated frontend assets in `static/`
-- templates already present in `templates/`
+Or download an archive from the [releases page](https://github.com/clement-tourriere/codebeam/releases). To build from source instead, run `mise install && mise run build` from the repository root (produces `bin/codebeam`).
 
 ## Install on a Linux host
 
-Example layout:
+Make sure `git` (and optionally `universal-ctags`) is installed, then:
 
 ```sh
 sudo install -d -o codebeam -g codebeam /opt/codebeam
 sudo install -d -o codebeam -g codebeam /var/lib/codebeam
 sudo install -d -o root -g codebeam -m 0750 /etc/codebeam
 
-sudo cp bin/codebeam /opt/codebeam/codebeam
-sudo cp -R static templates /opt/codebeam/
-sudo chown -R codebeam:codebeam /opt/codebeam /var/lib/codebeam
+sudo install -m 0755 codebeam /opt/codebeam/codebeam
 ```
 
 Create `/etc/codebeam/codebeam.env`:
@@ -59,9 +52,6 @@ CODEBEAM_DEV_LOGIN=false
 # path limited to the data dir), set it explicitly here rather than relying on
 # auto-generation. Generate with: openssl rand -base64 32
 CODEBEAM_ENCRYPTION_KEY=replace-with-a-long-random-value
-
-CODEBEAM_STATIC_DIR=/opt/codebeam/static
-CODEBEAM_TEMPLATE_GLOB=/opt/codebeam/templates/*.html
 
 CODEBEAM_GITHUB_CLIENT_ID=...
 CODEBEAM_GITHUB_CLIENT_SECRET=...
@@ -140,43 +130,36 @@ server {
 
 Set `CODEBEAM_BASE_URL=https://codebeam.example.com` and register OAuth callbacks with that same host.
 
-## Future Docker shape
+## Docker
 
-No official image is published yet. When a Dockerfile/image is added, it should follow this runtime contract:
+Multi-arch images (linux/amd64, linux/arm64) are published to GHCR on every release: `ghcr.io/clement-tourriere/codebeam` with `latest`, `X.Y`, and `X.Y.Z` tags. The image includes `git` and Universal Ctags, listens on `:8080`, and uses **two volumes**:
 
-- listen on `:8080` inside the container,
-- mount a persistent volume at `/data`,
-- set `CODEBEAM_DATA_DIR=/data`,
-- include `static/`, `templates/`, `git`, and optionally Universal Ctags,
-- pass OAuth and session settings as environment variables or secrets,
-- set `CODEBEAM_ENCRYPTION_KEY` (or mount `CODEBEAM_ENCRYPTION_KEY_FILE` on the persistent volume) — a container that regenerates its key each restart cannot read previously stored tokens.
-
-A future Compose file is expected to look like this:
+- `/data` — SQLite database, cloned repos, and search indexes (`CODEBEAM_DATA_DIR`).
+- `/config` — the auto-generated token-encryption key, deliberately separate from `/data` so a stolen data backup does not also carry the key. Persist both; losing `/config` makes stored code-host tokens unreadable (or set `CODEBEAM_ENCRYPTION_KEY` explicitly instead).
 
 ```yaml
 services:
   codebeam:
-    image: ghcr.io/ctourriere/codebeam:latest # future image
+    image: ghcr.io/clement-tourriere/codebeam:latest
     restart: unless-stopped
     environment:
-      CODEBEAM_ADDR: ":8080"
       CODEBEAM_BASE_URL: "https://codebeam.example.com"
-      CODEBEAM_DATA_DIR: "/data"
       CODEBEAM_SESSION_SECRET: "replace-with-a-long-random-value"
-      CODEBEAM_ENCRYPTION_KEY: "replace-with-a-long-random-value"
       CODEBEAM_DEV_LOGIN: "false"
       CODEBEAM_GITHUB_CLIENT_ID: "..."
       CODEBEAM_GITHUB_CLIENT_SECRET: "..."
     volumes:
       - codebeam-data:/data
+      - codebeam-config:/config
     ports:
       - "127.0.0.1:8080:8080"
 
 volumes:
   codebeam-data:
+  codebeam-config:
 ```
 
-Until then, use the binary deployment above or build your own image from the same contract.
+To index repositories already on the host, bind-mount them (read-only is fine for indexing) and add them as local repositories from the UI.
 
 ## Backups
 
@@ -194,19 +177,15 @@ Code-host access tokens in the database are **encrypted at rest**, so a stolen d
 
 ## Upgrades
 
-1. Pull the new Codebeam source or release.
-2. Run `mise run build`.
-3. Stop Codebeam.
-4. Replace the binary and updated `static/` / `templates/` assets.
-5. Start Codebeam.
-6. Watch logs for migration or indexing errors. On the first start after upgrading to a build with token encryption, any plaintext code-host tokens are encrypted in place automatically (a one-time, idempotent migration); reads keep working with no user action. This makes the token column one-way — an older binary without decryption support would read the encrypted values as invalid tokens.
+With Docker, pull the new image tag and recreate the container. With the binary:
+
+1. Download the new release (or rerun the install script).
+2. Stop Codebeam, replace the binary, start Codebeam — the web assets are embedded, there is nothing else to copy.
+3. Watch logs for migration or indexing errors. On the first start after upgrading to a build with token encryption, any plaintext code-host tokens are encrypted in place automatically (a one-time, idempotent migration); reads keep working with no user action. This makes the token column one-way — an older binary without decryption support would read the encrypted values as invalid tokens.
 
 ```sh
 sudo systemctl stop codebeam
-sudo cp bin/codebeam /opt/codebeam/codebeam
-sudo rm -rf /opt/codebeam/static /opt/codebeam/templates
-sudo cp -R static templates /opt/codebeam/
-sudo chown -R codebeam:codebeam /opt/codebeam
+sudo install -m 0755 codebeam /opt/codebeam/codebeam
 sudo systemctl start codebeam
 sudo journalctl -u codebeam -f
 ```

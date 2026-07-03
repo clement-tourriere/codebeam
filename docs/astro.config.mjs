@@ -2,6 +2,9 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
+  // GitHub Pages project site: served under /codebeam/.
+  site: 'https://clement-tourriere.github.io',
+  base: '/codebeam',
   integrations: [
     starlight({
       title: 'Codebeam',
@@ -10,7 +13,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub repository',
-          href: 'https://github.com/ctourriere/codebeam',
+          href: 'https://github.com/clement-tourriere/codebeam',
         },
       ],
       sidebar: [

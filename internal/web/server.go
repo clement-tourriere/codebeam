@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	codebeam "github.com/ctourriere/codebeam"
 	"github.com/ctourriere/codebeam/internal/codehost"
 	"github.com/ctourriere/codebeam/internal/config"
 	"github.com/ctourriere/codebeam/internal/indexer"
@@ -234,7 +235,7 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		chromaCSS: buildChromaCSS(),
 	}
 
-	tmpl, err := template.New("").Funcs(template.FuncMap{
+	tmpl := template.New("").Funcs(template.FuncMap{
 		"formatUnix":              formatUnix,
 		"sinceUnix":               sinceUnix,
 		"codeURL":                 codeURL,
@@ -265,7 +266,15 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		"branchExtraCount":        branchExtraCount,
 		"branchTitle":             branchTitle,
 		"shortCommit":             shortCommit,
-	}).ParseGlob(cfg.TemplateGlob)
+	})
+	var err error
+	// Disk templates win when present (development, Docker image); a released
+	// binary run outside the repo falls back to the embedded copies.
+	if matches, globErr := filepath.Glob(cfg.TemplateGlob); globErr == nil && len(matches) > 0 {
+		tmpl, err = tmpl.ParseGlob(cfg.TemplateGlob)
+	} else {
+		tmpl, err = tmpl.ParseFS(codebeam.Templates, "templates/*.html")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -273,9 +282,22 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 	return s, nil
 }
 
+// staticFS mirrors the template lookup: serve from the configured directory
+// when it exists, otherwise from the assets embedded in the binary.
+func (s *Server) staticFS() http.FileSystem {
+	if info, err := os.Stat(s.cfg.StaticDir); err == nil && info.IsDir() {
+		return http.Dir(s.cfg.StaticDir)
+	}
+	sub, err := fs.Sub(codebeam.Static, "static")
+	if err != nil {
+		return http.Dir(s.cfg.StaticDir)
+	}
+	return http.FS(sub)
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(s.cfg.StaticDir))))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(s.staticFS())))
 	mux.HandleFunc("/assets/chroma.css", s.handleChromaCSS)
 	mux.HandleFunc("/", s.route)
 	return mux
