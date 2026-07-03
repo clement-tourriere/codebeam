@@ -1,0 +1,9 @@
+.git
+bin/
+docs/
+testdata/
+**/node_modules
+.env
+.codebeam/
+Dockerfile
+.dockerignore
