@@ -1,3 +1,9 @@
+## v0.2.0 (2026-07-07)
+
+### Feat
+
+- **cli**: add cb, a command-line client for any Codebeam server
+
 ## v0.1.1 (2026-07-03)
 
 ### Fix
