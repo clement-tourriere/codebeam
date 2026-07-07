@@ -5,10 +5,11 @@ description: Connect Claude Code and other MCP clients, pack context with the CL
 
 Codebeam was built with AI coding agents in mind. An agent that greps a checkout burns context on false positives and can't see repositories it hasn't cloned; Codebeam gives it the opposite — precise, indexed retrieval over *everything*, with every result carrying a `repo:path:line@commit` citation the agent can verify.
 
-Three interfaces expose the same index:
+Four interfaces expose the same index:
 
 - the **MCP server** — the richest one; use this for Claude Code and other agents,
-- the **`codebeam ctx` CLI** — one command that packs cited context for a prompt,
+- the **[`cb` CLI](/codebeam/cli/)** — the same tools from any terminal, with the same auth; the easiest path for shell-based agents, CI, and humans,
+- the **`codebeam ctx` CLI** — one command that packs cited context for a prompt (local index only),
 - the **JSON API** — for scripts and custom tooling.
 
 ## MCP server

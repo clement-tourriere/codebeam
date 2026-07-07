@@ -25,6 +25,19 @@ docker run -d --name codebeam -p 8080:8080 \
 
 Binaries for each platform are also on the [releases page](https://github.com/clement-tourriere/codebeam/releases).
 
+## CLI
+
+The release archive also ships `cb`, a client for any Codebeam server — the same cited, permission-scoped results the MCP tools return, from any terminal:
+
+```sh
+cb login codebeam.example.com     # one-time browser sign-in (OAuth, like an MCP client)
+cb search "func NewServer" --lang go
+cb def NewServer                  # where is it defined?
+cb read local/app:cmd/main.go:1-40
+```
+
+Agents and CI skip the login entirely: set `CODEBEAM_URL` and `CODEBEAM_TOKEN` (a personal access token from **Settings → API tokens**) and every command works headless. See the [CLI documentation](https://clement-tourriere.github.io/codebeam/cli/).
+
 ## Documentation
 
 The full setup and operations documentation is published at **<https://clement-tourriere.github.io/codebeam/>** (OAuth, environment variables, indexing, integrations, deployment). It lives in the Astro Starlight site under `docs/`:

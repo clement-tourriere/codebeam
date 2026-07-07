@@ -22,9 +22,12 @@ description = "Run Go tests"
 run = "go test ./..."
 
 [tasks.build]
-description = "Build the Codebeam binary"
+description = "Build the Codebeam server and cb CLI binaries"
 depends = ["css:build"]
-run = "go build -o bin/codebeam ./cmd/codebeam"
+run = [
+  "go build -o bin/codebeam ./cmd/codebeam",
+  "go build -o bin/cb ./cmd/cb",
+]
 
 [tasks."wasm:build"]
 description = "Build the ast-grep WASI module and embed it in internal/structural"

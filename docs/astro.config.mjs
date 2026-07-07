@@ -29,6 +29,7 @@ export default defineConfig({
           label: 'Use Codebeam',
           items: [
             { label: 'Searching', slug: 'searching' },
+            { label: 'The cb CLI', slug: 'cli' },
             { label: 'Repositories and indexing', slug: 'repositories-indexing' },
             { label: 'AI agents and APIs', slug: 'integrations' },
           ],

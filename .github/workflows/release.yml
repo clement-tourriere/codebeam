@@ -43,8 +43,11 @@ jobs:
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
               -ldflags "-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${version}" \
               -o "$out/codebeam" ./cmd/codebeam
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${version}" \
+              -o "$out/cb" ./cmd/cb
             cp LICENSE "$out/"
-            tar -C "$out" -czf "$out.tar.gz" codebeam LICENSE
+            tar -C "$out" -czf "$out.tar.gz" codebeam cb LICENSE
             rm -r "$out"
           done
           (cd dist && shasum -a 256 *.tar.gz > checksums.txt)

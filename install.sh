@@ -69,6 +69,10 @@ if command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1; th
 fi
 
 tar -xzf "$tmp/$archive" -C "$tmp" codebeam
+# cb (the CLI) ships alongside the server binary since v0.2; older archives
+# only carry codebeam.
+has_cb=true
+tar -xzf "$tmp/$archive" -C "$tmp" cb 2>/dev/null || has_cb=false
 
 # --- Install ---
 install_dir="${CODEBEAM_INSTALL_DIR:-/usr/local/bin}"
@@ -80,6 +84,10 @@ mkdir -p "$install_dir" || err "cannot create $install_dir"
 
 install -m 0755 "$tmp/codebeam" "$install_dir/codebeam"
 info "Installed codebeam $version to $install_dir/codebeam"
+if [ "$has_cb" = true ]; then
+  install -m 0755 "$tmp/cb" "$install_dir/cb"
+  info "Installed cb $version to $install_dir/cb (CLI — run 'cb login' to connect)"
+fi
 
 # --- Runtime dependency checks ---
 command -v git >/dev/null 2>&1 \

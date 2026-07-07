@@ -21,7 +21,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${VERSION}" \
-    -o /out/codebeam ./cmd/codebeam
+    -o /out/codebeam ./cmd/codebeam \
+    && CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${VERSION}" \
+    -o /out/cb ./cmd/cb
 
 # --- Runtime ---
 # Not scratch: codebeam shells out to `git` for clone/fetch/read, and Universal
@@ -33,6 +36,7 @@ RUN apk add --no-cache git ca-certificates tzdata ctags \
     && chown codebeam:codebeam /data /config
 
 COPY --from=build /out/codebeam /usr/local/bin/codebeam
+COPY --from=build /out/cb /usr/local/bin/cb
 COPY --from=frontend /src/static /app/static
 COPY templates /app/templates
 
