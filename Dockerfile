@@ -14,12 +14,10 @@ RUN npm --prefix frontend run build
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${VERSION}" \
     -o /out/codebeam ./cmd/codebeam \
     && CGO_ENABLED=0 go build -trimpath \
@@ -30,7 +28,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Not scratch: codebeam shells out to `git` for clone/fetch/read, and Universal
 # Ctags (Alpine's `ctags` package) enables symbol indexing. Both need a real OS.
 FROM alpine:3.22
-RUN apk add --no-cache git ca-certificates tzdata ctags \
+RUN apk add --no-cache git ca-certificates tzdata ctags su-exec \
     && adduser -D -u 1000 codebeam \
     && mkdir -p /data /config \
     && chown codebeam:codebeam /data /config
@@ -39,6 +37,7 @@ COPY --from=build /out/codebeam /usr/local/bin/codebeam
 COPY --from=build /out/cb /usr/local/bin/cb
 COPY --from=frontend /src/static /app/static
 COPY templates /app/templates
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # /data holds the SQLite DB, cloned repos, and search indexes. /config holds the
 # auto-generated token-encryption key — deliberately a separate volume so a
@@ -56,11 +55,14 @@ ENV GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=safe.directory \
     GIT_CONFIG_VALUE_0=*
 
-USER codebeam
-VOLUME ["/data", "/config"]
+# The entrypoint starts as root only long enough to make root-mounted PaaS
+# volumes writable, then drops to the unprivileged codebeam user with su-exec.
+# Declare persistent mounts in the runtime/orchestrator (Docker Compose,
+# Railway, Kubernetes, etc.); keeping them out of the image also avoids creating
+# anonymous volumes for users who already provide explicit mounts.
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD wget -qO /dev/null http://127.0.0.1:8080/ || exit 1
 
-ENTRYPOINT ["codebeam"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
