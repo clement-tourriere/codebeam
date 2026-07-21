@@ -1,3 +1,14 @@
+## v0.3.0 (2026-07-21)
+
+### Feat
+
+- **cli**: log in through Cloudflare Access-protected servers
+
+### Fix
+
+- **auth**: refresh expiring code host OAuth tokens
+- **docker**: support PaaS builders and volumes
+
 ## v0.2.1 (2026-07-21)
 
 ### Fix
