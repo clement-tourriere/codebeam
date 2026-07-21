@@ -1,3 +1,9 @@
+## v0.2.1 (2026-07-21)
+
+### Fix
+
+- **indexing**: keep search available during reindex
+
 ## v0.2.0 (2026-07-07)
 
 ### Feat
