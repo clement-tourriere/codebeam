@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ctourriere/codebeam/internal/secretbox"
 )
@@ -482,6 +483,62 @@ func TestAccessTokenEncryptedAtRest(t *testing.T) {
 	}
 	if got != token {
 		t.Fatalf("GetAccessToken = %q, want %q", got, token)
+	}
+}
+
+func TestExpiredOAuthCredentialRefreshesAndRotatesAtomically(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "codebeam.db"), secretbox.MustNewCipher("codebeam-test-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close() // nolint:errcheck
+
+	user, err := st.UpsertUserIdentityWithCredential(ctx, "gitlab", "gl-1", "gitlab-user", "gl@example.com", "GitLab User", "", CodeHostCredential{
+		AccessToken: "access-old", RefreshToken: "refresh-old", ExpiresAt: time.Now().Add(-time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rawAccess, rawRefresh string
+	if err := st.db.QueryRowContext(ctx, `SELECT access_token, refresh_token FROM identities WHERE provider = 'gitlab'`).Scan(&rawAccess, &rawRefresh); err != nil {
+		t.Fatal(err)
+	}
+	if rawAccess == "access-old" || rawRefresh == "refresh-old" || !secretbox.IsEncrypted(rawAccess) || !secretbox.IsEncrypted(rawRefresh) {
+		t.Fatalf("OAuth credential was not encrypted at rest")
+	}
+
+	refreshes := 0
+	refresher := func(_ context.Context, refreshToken string) (CodeHostCredential, error) {
+		refreshes++
+		if refreshToken != "refresh-old" {
+			t.Fatalf("refresh token = %q", refreshToken)
+		}
+		return CodeHostCredential{
+			AccessToken: "access-new", RefreshToken: "refresh-new", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		}, nil
+	}
+	got, err := st.GetAccessTokenWithRefresh(ctx, user.ID, "gitlab", refresher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "access-new" || refreshes != 1 {
+		t.Fatalf("first access = %q, refreshes = %d", got, refreshes)
+	}
+	got, err = st.GetAccessTokenWithRefresh(ctx, user.ID, "gitlab", refresher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "access-new" || refreshes != 1 {
+		t.Fatalf("second access = %q, refreshes = %d; fresh credential should be reused", got, refreshes)
+	}
+	credential, err := st.GetCodeHostCredential(ctx, user.ID, "gitlab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.AccessToken != "access-new" || credential.RefreshToken != "refresh-new" || credential.ExpiresAt <= time.Now().Unix() {
+		t.Fatalf("stored rotated credential = %#v", credential)
 	}
 }
 

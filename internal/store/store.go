@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ctourriere/codebeam/internal/secretbox"
@@ -21,6 +22,11 @@ import (
 type Store struct {
 	db     *sql.DB
 	cipher *secretbox.Cipher
+
+	// GitLab rotates both OAuth tokens during refresh. Serialize refreshes across
+	// this store so two concurrent index/API requests cannot consume the same
+	// single-use refresh token and strand the identity.
+	tokenMu sync.Mutex
 }
 
 type User struct {
@@ -40,6 +46,18 @@ type Identity struct {
 	Username       string
 	UpdatedAt      int64
 }
+
+// CodeHostCredential is the reversible credential Codebeam keeps for a
+// GitHub/GitLab identity. PAT connections only set AccessToken; OAuth
+// connections may additionally carry a rotating refresh token and expiry.
+type CodeHostCredential struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    int64
+}
+
+// TokenRefresher exchanges a provider refresh token for a new credential.
+type TokenRefresher func(context.Context, string) (CodeHostCredential, error)
 
 type Repo struct {
 	ID                 int64
@@ -185,6 +203,8 @@ CREATE TABLE IF NOT EXISTS identities (
 	provider_user_id TEXT NOT NULL,
 	username TEXT NOT NULL,
 	access_token TEXT NOT NULL DEFAULT '',
+	refresh_token TEXT NOT NULL DEFAULT '',
+	token_expires_at INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL DEFAULT (unixepoch()),
 	updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
 	UNIQUE(provider, provider_user_id)
@@ -263,6 +283,12 @@ WHERE r.selected = 1
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "identities", "refresh_token", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "identities", "token_expires_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "repos", "indexed_branches", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -339,6 +365,10 @@ func (s *Store) CreateDevUser(ctx context.Context) (*User, error) {
 }
 
 func (s *Store) UpsertUserIdentity(ctx context.Context, provider, providerUserID, username, email, name, avatarURL, accessToken string) (*User, error) {
+	return s.UpsertUserIdentityWithCredential(ctx, provider, providerUserID, username, email, name, avatarURL, CodeHostCredential{AccessToken: accessToken})
+}
+
+func (s *Store) UpsertUserIdentityWithCredential(ctx context.Context, provider, providerUserID, username, email, name, avatarURL string, credential CodeHostCredential) (*User, error) {
 	if provider == "" || providerUserID == "" {
 		return nil, errors.New("provider and provider user id are required")
 	}
@@ -354,7 +384,11 @@ func (s *Store) UpsertUserIdentity(ctx context.Context, provider, providerUserID
 
 	// Encrypt the code-host token before it touches SQL. Empty stays empty so the
 	// "WHERE access_token != ''" sentinels keep meaning "has a token".
-	storedToken, err := s.cipher.Encrypt(accessToken)
+	storedToken, err := s.cipher.Encrypt(credential.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	storedRefreshToken, err := s.cipher.Encrypt(credential.RefreshToken)
 	if err != nil {
 		return nil, err
 	}
@@ -391,9 +425,9 @@ INSERT INTO users (email, name, avatar_url, role) VALUES (?, ?, ?, ?)
 			return nil, err
 		}
 		_, err = tx.ExecContext(ctx, `
-INSERT INTO identities (user_id, provider, provider_user_id, username, access_token)
-VALUES (?, ?, ?, ?, ?)
-`, userID, provider, providerUserID, username, storedToken)
+INSERT INTO identities (user_id, provider, provider_user_id, username, access_token, refresh_token, token_expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`, userID, provider, providerUserID, username, storedToken, storedRefreshToken, credential.ExpiresAt)
 		if err != nil {
 			return nil, err
 		}
@@ -408,9 +442,9 @@ UPDATE users SET email = ?, name = ?, avatar_url = ? WHERE id = ?
 		}
 		_, err = tx.ExecContext(ctx, `
 UPDATE identities
-SET username = ?, access_token = ?, updated_at = unixepoch()
+SET username = ?, access_token = ?, refresh_token = ?, token_expires_at = ?, updated_at = unixepoch()
 WHERE provider = ? AND provider_user_id = ?
-`, username, storedToken, provider, providerUserID)
+`, username, storedToken, storedRefreshToken, credential.ExpiresAt, provider, providerUserID)
 		if err != nil {
 			return nil, err
 		}
@@ -423,6 +457,10 @@ WHERE provider = ? AND provider_user_id = ?
 }
 
 func (s *Store) UpsertIdentityForUser(ctx context.Context, userID int64, provider, providerUserID, username, accessToken string) error {
+	return s.UpsertIdentityForUserWithCredential(ctx, userID, provider, providerUserID, username, CodeHostCredential{AccessToken: accessToken})
+}
+
+func (s *Store) UpsertIdentityForUserWithCredential(ctx context.Context, userID int64, provider, providerUserID, username string, credential CodeHostCredential) error {
 	if userID == 0 {
 		return errors.New("user id is required")
 	}
@@ -432,19 +470,25 @@ func (s *Store) UpsertIdentityForUser(ctx context.Context, userID int64, provide
 	if username == "" {
 		username = providerUserID
 	}
-	storedToken, err := s.cipher.Encrypt(accessToken)
+	storedToken, err := s.cipher.Encrypt(credential.AccessToken)
+	if err != nil {
+		return err
+	}
+	storedRefreshToken, err := s.cipher.Encrypt(credential.RefreshToken)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO identities (user_id, provider, provider_user_id, username, access_token)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO identities (user_id, provider, provider_user_id, username, access_token, refresh_token, token_expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(provider, provider_user_id) DO UPDATE SET
 	user_id = excluded.user_id,
 	username = excluded.username,
 	access_token = excluded.access_token,
+	refresh_token = excluded.refresh_token,
+	token_expires_at = excluded.token_expires_at,
 	updated_at = unixepoch()
-`, userID, provider, providerUserID, username, storedToken)
+`, userID, provider, providerUserID, username, storedToken, storedRefreshToken, credential.ExpiresAt)
 	return err
 }
 
@@ -483,46 +527,114 @@ ORDER BY provider
 }
 
 func (s *Store) GetAccessToken(ctx context.Context, userID int64, provider string) (string, error) {
-	var token string
-	err := s.db.QueryRowContext(ctx, `
-SELECT access_token FROM identities WHERE user_id = ? AND provider = ?
-`, userID, provider).Scan(&token)
+	credential, err := s.GetCodeHostCredential(ctx, userID, provider)
 	if err != nil {
-		return "", err // preserve sql.ErrNoRows for callers' errors.Is checks
+		return "", err
 	}
-	// Decrypt maps ""→"" and legacy plaintext→itself; a marked value under a wrong
-	// key returns an error rather than a bogus token. The error carries no secret.
-	return s.cipher.Decrypt(token)
+	return credential.AccessToken, nil
+}
+
+func (s *Store) GetCodeHostCredential(ctx context.Context, userID int64, provider string) (CodeHostCredential, error) {
+	var storedAccessToken, storedRefreshToken string
+	var credential CodeHostCredential
+	err := s.db.QueryRowContext(ctx, `
+SELECT access_token, refresh_token, token_expires_at
+FROM identities WHERE user_id = ? AND provider = ?
+`, userID, provider).Scan(&storedAccessToken, &storedRefreshToken, &credential.ExpiresAt)
+	if err != nil {
+		return CodeHostCredential{}, err // preserve sql.ErrNoRows for callers
+	}
+	credential.AccessToken, err = s.cipher.Decrypt(storedAccessToken)
+	if err != nil {
+		return CodeHostCredential{}, err
+	}
+	credential.RefreshToken, err = s.cipher.Decrypt(storedRefreshToken)
+	if err != nil {
+		return CodeHostCredential{}, err
+	}
+	return credential, nil
+}
+
+// GetAccessTokenWithRefresh returns a usable provider token, refreshing OAuth
+// credentials shortly before expiry. Refresh is serialized because GitLab
+// invalidates both old tokens on every exchange; a concurrent second exchange
+// with the same refresh token would otherwise fail and could overwrite the
+// successful rotation.
+func (s *Store) GetAccessTokenWithRefresh(ctx context.Context, userID int64, provider string, refresher TokenRefresher) (string, error) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+
+	credential, err := s.GetCodeHostCredential(ctx, userID, provider)
+	if err != nil {
+		return "", err
+	}
+	if credential.RefreshToken == "" || credential.ExpiresAt == 0 || credential.ExpiresAt > time.Now().Add(time.Minute).Unix() {
+		return credential.AccessToken, nil
+	}
+	if refresher == nil {
+		return "", fmt.Errorf("%s OAuth token expired and cannot be refreshed", provider)
+	}
+	refreshed, err := refresher(ctx, credential.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("refresh %s OAuth token: %w", provider, err)
+	}
+	if refreshed.AccessToken == "" {
+		return "", fmt.Errorf("refresh %s OAuth token: provider returned no access token", provider)
+	}
+	if refreshed.RefreshToken == "" {
+		refreshed.RefreshToken = credential.RefreshToken
+	}
+	storedAccessToken, err := s.cipher.Encrypt(refreshed.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	storedRefreshToken, err := s.cipher.Encrypt(refreshed.RefreshToken)
+	if err != nil {
+		return "", err
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE identities
+SET access_token = ?, refresh_token = ?, token_expires_at = ?
+WHERE user_id = ? AND provider = ?
+`, storedAccessToken, storedRefreshToken, refreshed.ExpiresAt, userID, provider)
+	if err != nil {
+		return "", err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return "", sql.ErrNoRows
+	}
+	return refreshed.AccessToken, nil
 }
 
 // encryptExistingTokens is a one-time, idempotent migration that encrypts any
-// identity access tokens still stored as plaintext (rows written before
-// encryption-at-rest existed). It runs on every Open but only rewrites values that
-// lack the secretbox marker, so re-runs — and two processes opening the same DB —
-// can never double-encrypt. It deliberately leaves updated_at untouched: this is
-// not a semantic change and must not disturb ordering that keys off it (e.g.
-// ListRemoteReindexCandidates).
+// identity access or refresh tokens still stored as plaintext. It runs on every
+// Open but only rewrites values that lack the secretbox marker, so re-runs can
+// never double-encrypt. updated_at is deliberately left untouched.
 func (s *Store) encryptExistingTokens(ctx context.Context) error {
-	// Read every non-empty token into memory and close the cursor BEFORE issuing
-	// any UPDATE: the store caps the pool at a single connection
-	// (SetMaxOpenConns(1)), so writing while a SELECT cursor is still open would
-	// deadlock on busy_timeout. The set is tiny — one row per code-host identity.
+	// Close the cursor before updating: the store intentionally has one DB
+	// connection, and writing while this SELECT is open would deadlock.
 	type row struct {
-		id    int64
-		token string
+		id      int64
+		access  string
+		refresh string
 	}
-	cur, err := s.db.QueryContext(ctx, `SELECT id, access_token FROM identities WHERE access_token != ''`)
+	cur, err := s.db.QueryContext(ctx, `
+SELECT id, access_token, refresh_token FROM identities
+WHERE access_token != '' OR refresh_token != ''
+`)
 	if err != nil {
 		return err
 	}
 	var pending []row
 	for cur.Next() {
 		var r row
-		if err := cur.Scan(&r.id, &r.token); err != nil {
+		if err := cur.Scan(&r.id, &r.access, &r.refresh); err != nil {
 			cur.Close()
 			return err
 		}
-		if !secretbox.IsEncrypted(r.token) {
+		accessPlain := r.access != "" && !secretbox.IsEncrypted(r.access)
+		refreshPlain := r.refresh != "" && !secretbox.IsEncrypted(r.refresh)
+		if accessPlain || refreshPlain {
 			pending = append(pending, r)
 		}
 	}
@@ -541,38 +653,51 @@ func (s *Store) encryptExistingTokens(ctx context.Context) error {
 	}
 	defer tx.Rollback() // nolint:errcheck
 	for _, r := range pending {
-		enc, err := s.cipher.Encrypt(r.token)
-		if err != nil {
-			return err
+		if r.access != "" && !secretbox.IsEncrypted(r.access) {
+			r.access, err = s.cipher.Encrypt(r.access)
+			if err != nil {
+				return err
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE identities SET access_token = ? WHERE id = ?`, enc, r.id); err != nil {
+		if r.refresh != "" && !secretbox.IsEncrypted(r.refresh) {
+			r.refresh, err = s.cipher.Encrypt(r.refresh)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE identities SET access_token = ?, refresh_token = ? WHERE id = ?
+`, r.access, r.refresh, r.id); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-// CountUnreadableTokens returns how many non-empty, encrypted identity tokens the
-// current cipher fails to decrypt — i.e. tokens sealed under a different key. It
-// is used only for a startup warning (e.g. after a key file was regenerated on a
-// stateless container); it never returns or logs the token values.
+// CountUnreadableTokens returns how many encrypted identity token fields cannot
+// be decrypted with the active key. It never returns or logs token values.
 func (s *Store) CountUnreadableTokens(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT access_token FROM identities WHERE access_token != ''`)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT access_token, refresh_token FROM identities
+WHERE access_token != '' OR refresh_token != ''
+`)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 	var unreadable int
 	for rows.Next() {
-		var token string
-		if err := rows.Scan(&token); err != nil {
+		var accessToken, refreshToken string
+		if err := rows.Scan(&accessToken, &refreshToken); err != nil {
 			return 0, err
 		}
-		if !secretbox.IsEncrypted(token) {
-			continue // legacy plaintext decrypts via passthrough, not a failure
-		}
-		if _, err := s.cipher.Decrypt(token); err != nil {
-			unreadable++
+		for _, token := range []string{accessToken, refreshToken} {
+			if token == "" || !secretbox.IsEncrypted(token) {
+				continue
+			}
+			if _, err := s.cipher.Decrypt(token); err != nil {
+				unreadable++
+			}
 		}
 	}
 	return unreadable, rows.Err()

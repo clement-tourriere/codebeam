@@ -738,7 +738,7 @@ func (i *Indexer) accessTokenForRepo(ctx context.Context, repo store.Repo, userI
 		}
 		return "", nil
 	}
-	token, err := i.store.GetAccessToken(ctx, userID, repo.HostProvider)
+	token, err := i.store.GetAccessTokenWithRefresh(ctx, userID, repo.HostProvider, i.oauthTokenRefresher(repo.HostProvider))
 	if err == nil {
 		if token == "" && repo.Private {
 			return "", fmt.Errorf("%s requires credentials", repo.FullName)
@@ -749,6 +749,37 @@ func (i *Indexer) accessTokenForRepo(ctx context.Context, repo store.Repo, userI
 		return "", nil
 	}
 	return "", fmt.Errorf("load %s token: %w", repo.HostProvider, err)
+}
+
+func (i *Indexer) oauthTokenRefresher(provider string) store.TokenRefresher {
+	var oauthConfig codehost.OAuthConfig
+	switch provider {
+	case string(codehost.GitHub):
+		oauthConfig = codehost.OAuthConfig{
+			Provider: codehost.GitHub, ClientID: i.cfg.GitHubClientID, ClientSecret: i.cfg.GitHubClientSecret,
+		}
+	case string(codehost.GitLab):
+		oauthConfig = codehost.OAuthConfig{
+			Provider: codehost.GitLab, BaseURL: i.cfg.GitLabBaseURL,
+			ClientID: i.cfg.GitLabClientID, ClientSecret: i.cfg.GitLabClientSecret,
+		}
+	default:
+		return nil // PAT-backed self-managed GitLab connection
+	}
+	client := codehost.New(oauthConfig)
+	if !client.Configured() {
+		return nil
+	}
+	redirectURI := strings.TrimRight(i.cfg.BaseURL, "/") + "/auth/" + provider + "/callback"
+	return func(ctx context.Context, refreshToken string) (store.CodeHostCredential, error) {
+		tokens, err := client.RefreshOAuthToken(ctx, refreshToken, redirectURI)
+		if err != nil {
+			return store.CodeHostCredential{}, err
+		}
+		return store.CodeHostCredential{
+			AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: tokens.ExpiresAt,
+		}, nil
+	}
 }
 
 func (i *Indexer) clone(ctx context.Context, worktree, authHeader string, repo store.Repo, branch string, allowFallback bool) error {

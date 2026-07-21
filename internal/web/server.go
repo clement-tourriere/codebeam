@@ -580,24 +580,27 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request, prov
 		redirectError(w, r, s.authErrorTarget(r), errors.New("OAuth callback did not include a code"))
 		return
 	}
-	token, err := client.ExchangeCode(r.Context(), code, r.URL.Query().Get("state"), s.oauthRedirectURI(provider))
+	tokens, err := client.ExchangeCodeTokens(r.Context(), code, r.URL.Query().Get("state"), s.oauthRedirectURI(provider))
 	if err != nil {
 		redirectError(w, r, s.authErrorTarget(r), err)
 		return
 	}
-	info, err := client.FetchUser(r.Context(), token)
+	info, err := client.FetchUser(r.Context(), tokens.AccessToken)
 	if err != nil {
 		redirectError(w, r, s.authErrorTarget(r), err)
 		return
 	}
 	var user *store.User
 	connected := false
+	credential := store.CodeHostCredential{
+		AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: tokens.ExpiresAt,
+	}
 	if current, ok := s.currentUser(r); ok {
 		user = current
 		connected = true
-		err = s.store.UpsertIdentityForUser(r.Context(), current.ID, provider, info.ProviderUserID, info.Username, token)
+		err = s.store.UpsertIdentityForUserWithCredential(r.Context(), current.ID, provider, info.ProviderUserID, info.Username, credential)
 	} else {
-		user, err = s.store.UpsertUserIdentity(
+		user, err = s.store.UpsertUserIdentityWithCredential(
 			r.Context(),
 			provider,
 			info.ProviderUserID,
@@ -605,7 +608,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request, prov
 			info.Email,
 			info.Name,
 			info.AvatarURL,
-			token,
+			credential,
 		)
 	}
 	if err != nil {
@@ -1051,7 +1054,7 @@ func (s *Server) syncProviderRepos(ctx context.Context, user *store.User, provid
 	if !ok {
 		return 0, fmt.Errorf("unknown provider %q", provider)
 	}
-	token, err := s.store.GetAccessToken(ctx, user.ID, provider)
+	token, err := s.accessTokenForProvider(ctx, user.ID, provider, client)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("connect %s first", providerName(provider))
 	}
@@ -1113,7 +1116,7 @@ func (s *Server) ReconcileRepoPermissions(ctx context.Context, userID int64, pro
 	if !ok {
 		return nil
 	}
-	token, err := s.store.GetAccessToken(ctx, userID, provider)
+	token, err := s.accessTokenForProvider(ctx, userID, provider, client)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // no identity for this provider: nothing to reconcile
 	}
@@ -1150,6 +1153,22 @@ func (s *Server) ReconcileRepoPermissions(ctx context.Context, userID int64, pro
 		}
 	}
 	return nil
+}
+
+func (s *Server) accessTokenForProvider(ctx context.Context, userID int64, provider string, client *codehost.Client) (string, error) {
+	var refresher store.TokenRefresher
+	if client.Configured() && (provider == string(codehost.GitHub) || provider == string(codehost.GitLab)) {
+		refresher = func(ctx context.Context, refreshToken string) (store.CodeHostCredential, error) {
+			tokens, err := client.RefreshOAuthToken(ctx, refreshToken, s.oauthRedirectURI(provider))
+			if err != nil {
+				return store.CodeHostCredential{}, err
+			}
+			return store.CodeHostCredential{
+				AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: tokens.ExpiresAt,
+			}, nil
+		}
+	}
+	return s.store.GetAccessTokenWithRefresh(ctx, userID, provider, refresher)
 }
 
 func (s *Server) clientForProvider(provider string) (*codehost.Client, bool) {

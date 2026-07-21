@@ -29,6 +29,15 @@ type OAuthConfig struct {
 	ClientSecret string
 }
 
+// OAuthTokens is the complete credential returned by a code host. GitLab
+// access tokens last two hours and rotates both tokens on refresh, so retaining
+// only AccessToken is not sufficient for unattended indexing.
+type OAuthTokens struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    int64
+}
+
 type UserInfo struct {
 	ProviderUserID string
 	Username       string
@@ -154,9 +163,19 @@ func (c *Client) AuthCodeURL(state, redirectURI string) (string, error) {
 	}
 }
 
+// ExchangeCode is retained for callers that only need the access token. New
+// server code should use ExchangeCodeTokens so refreshability is not discarded.
 func (c *Client) ExchangeCode(ctx context.Context, code, state, redirectURI string) (string, error) {
+	tokens, err := c.ExchangeCodeTokens(ctx, code, state, redirectURI)
+	if err != nil {
+		return "", err
+	}
+	return tokens.AccessToken, nil
+}
+
+func (c *Client) ExchangeCodeTokens(ctx context.Context, code, state, redirectURI string) (OAuthTokens, error) {
 	if !c.Configured() {
-		return "", fmt.Errorf("%s OAuth is not configured", c.config.Provider)
+		return OAuthTokens{}, fmt.Errorf("%s OAuth is not configured", c.config.Provider)
 	}
 
 	values := url.Values{}
@@ -165,43 +184,93 @@ func (c *Client) ExchangeCode(ctx context.Context, code, state, redirectURI stri
 	values.Set("code", code)
 	values.Set("redirect_uri", redirectURI)
 
-	var endpoint string
+	endpoint, err := c.oauthTokenEndpoint()
+	if err != nil {
+		return OAuthTokens{}, err
+	}
 	switch c.config.Provider {
 	case GitHub:
 		values.Set("state", state)
-		endpoint = "https://github.com/login/oauth/access_token"
 	case GitLab:
 		values.Set("grant_type", "authorization_code")
-		endpoint = strings.TrimRight(c.config.BaseURL, "/") + "/oauth/token"
+	}
+	return c.postOAuthToken(ctx, endpoint, values)
+}
+
+// RefreshOAuthToken rotates an expiring provider credential. GitLab requires
+// the same redirect URI as the original authorization and invalidates both old
+// tokens after a successful exchange.
+func (c *Client) RefreshOAuthToken(ctx context.Context, refreshToken, redirectURI string) (OAuthTokens, error) {
+	if !c.Configured() {
+		return OAuthTokens{}, fmt.Errorf("%s OAuth is not configured", c.config.Provider)
+	}
+	if strings.TrimSpace(refreshToken) == "" {
+		return OAuthTokens{}, errors.New("OAuth refresh token is required")
+	}
+	endpoint, err := c.oauthTokenEndpoint()
+	if err != nil {
+		return OAuthTokens{}, err
+	}
+	values := url.Values{
+		"client_id":     {c.config.ClientID},
+		"client_secret": {c.config.ClientSecret},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	}
+	if redirectURI != "" {
+		values.Set("redirect_uri", redirectURI)
+	}
+	return c.postOAuthToken(ctx, endpoint, values)
+}
+
+func (c *Client) oauthTokenEndpoint() (string, error) {
+	switch c.config.Provider {
+	case GitHub:
+		return "https://github.com/login/oauth/access_token", nil
+	case GitLab:
+		return strings.TrimRight(c.config.BaseURL, "/") + "/oauth/token", nil
 	default:
 		return "", fmt.Errorf("unsupported OAuth provider %q", c.config.Provider)
 	}
+}
 
+func (c *Client) postOAuthToken(ctx context.Context, endpoint string, values url.Values) (OAuthTokens, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", err
+		return OAuthTokens{}, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	var out struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-		Description string `json:"error_description"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int64  `json:"expires_in"`
+		CreatedAt    int64  `json:"created_at"`
+		Error        string `json:"error"`
+		Description  string `json:"error_description"`
 	}
 	if err := c.doJSON(req, &out); err != nil {
-		return "", err
+		return OAuthTokens{}, err
 	}
 	if out.Error != "" {
 		if out.Description != "" {
-			return "", fmt.Errorf("%s OAuth error: %s", c.config.Provider, out.Description)
+			return OAuthTokens{}, fmt.Errorf("%s OAuth error: %s", c.config.Provider, out.Description)
 		}
-		return "", fmt.Errorf("%s OAuth error: %s", c.config.Provider, out.Error)
+		return OAuthTokens{}, fmt.Errorf("%s OAuth error: %s", c.config.Provider, out.Error)
 	}
 	if out.AccessToken == "" {
-		return "", errors.New("OAuth response did not include an access token")
+		return OAuthTokens{}, errors.New("OAuth response did not include an access token")
 	}
-	return out.AccessToken, nil
+	expiresAt := int64(0)
+	if out.ExpiresIn > 0 {
+		createdAt := out.CreatedAt
+		if createdAt == 0 {
+			createdAt = time.Now().Unix()
+		}
+		expiresAt = createdAt + out.ExpiresIn
+	}
+	return OAuthTokens{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken, ExpiresAt: expiresAt}, nil
 }
 
 func (c *Client) FetchUser(ctx context.Context, token string) (UserInfo, error) {
