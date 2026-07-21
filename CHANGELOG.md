@@ -1,3 +1,13 @@
+## v0.4.0 (2026-07-21)
+
+### Feat
+
+- **cli**: add cb mcp, a stdio MCP proxy to the server
+
+### Fix
+
+- **docker**: run tini as PID 1 to reap orphaned git helpers
+
 ## v0.3.0 (2026-07-21)
 
 ### Feat
