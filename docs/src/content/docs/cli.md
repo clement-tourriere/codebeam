@@ -66,6 +66,17 @@ export CF_ACCESS_CLIENT_SECRET=…
 
 combined with `CODEBEAM_TOKEN`, every command works with no login and no browser. Servers that are not behind Cloudflare Access are untouched by all of this — detection happens once at login and changes nothing when no gateway answers.
 
+## One command for agents: cb mcp
+
+`cb mcp` serves the MCP stdio transport and relays every message to the server's `/mcp` endpoint with cb's stored credentials — OAuth refresh and the Cloudflare Access hop included. Any MCP client gets remote, permission-scoped retrieval with a one-line registration, no headers or tokens to manage:
+
+```sh
+cb login codebeam.example.com        # once
+claude mcp add codebeam -- cb mcp    # or any client config: command "cb", args ["mcp"]
+```
+
+This is the way through for agents when the instance sits behind an SSO gateway (they cannot drive `cloudflared` themselves), and it works equally well on plain instances. It targets the default server (the last `cb login`); pass `--server` to pin one, or set `CODEBEAM_URL` + `CODEBEAM_TOKEN` for fully headless use. Failures — including an expired SSO session — come back as JSON-RPC errors inside the agent's conversation ("run `cb login …`"), so the agent can tell you how to fix it instead of silently losing its tools.
+
 ## Commands
 
 | Command | What you get |

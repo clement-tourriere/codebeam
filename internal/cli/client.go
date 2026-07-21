@@ -30,19 +30,8 @@ type client struct {
 
 var errNotLoggedIn = errors.New("not logged in")
 
-// callTool invokes one MCP tool and returns its text result. Expired OAuth
-// access tokens are refreshed transparently — before the request when the
-// recorded expiry has passed, and once more on a 401 in case the server
-// revoked the token early.
+// callTool invokes one MCP tool and returns its text result.
 func (c *client) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
-	if c.creds == nil {
-		return "", errNotLoggedIn
-	}
-	if c.staleOAuth() {
-		if err := c.refresh(ctx); err != nil {
-			return "", err
-		}
-	}
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -52,25 +41,51 @@ func (c *client) callTool(ctx context.Context, name string, args map[string]any)
 	if err != nil {
 		return "", err
 	}
-	resp, raw, err := c.post(ctx, body)
+	raw, hasResponse, err := c.forward(ctx, body)
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode == http.StatusUnauthorized && c.creds.Kind == "oauth" && c.creds.RefreshToken != "" {
-		if err := c.refresh(ctx); err != nil {
-			return "", err
-		}
-		if resp, raw, err = c.post(ctx, body); err != nil {
-			return "", err
-		}
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("%s rejected the credentials — the token may be expired or revoked; sign in again with `cb login %s`", c.server, c.server)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s answered %s: %s", c.server, resp.Status, apiErrorMessage(raw))
+	if !hasResponse {
+		return "", errors.New("server returned no response")
 	}
 	return decodeToolResult(raw)
+}
+
+// forward relays one raw JSON-RPC message to the server's /mcp endpoint.
+// Expired OAuth access tokens are refreshed transparently — before the
+// request when the recorded expiry has passed, and once more on a 401 in
+// case the server revoked the token early. hasResponse is false for
+// notifications (202 Accepted, no body per the transport spec).
+func (c *client) forward(ctx context.Context, body []byte) (raw []byte, hasResponse bool, err error) {
+	if c.creds == nil {
+		return nil, false, errNotLoggedIn
+	}
+	if c.staleOAuth() {
+		if err := c.refresh(ctx); err != nil {
+			return nil, false, err
+		}
+	}
+	resp, raw, err := c.post(ctx, body)
+	if err != nil {
+		return nil, false, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && c.creds.Kind == "oauth" && c.creds.RefreshToken != "" {
+		if err := c.refresh(ctx); err != nil {
+			return nil, false, err
+		}
+		if resp, raw, err = c.post(ctx, body); err != nil {
+			return nil, false, err
+		}
+	}
+	switch {
+	case resp.StatusCode == http.StatusAccepted:
+		return nil, false, nil
+	case resp.StatusCode == http.StatusUnauthorized:
+		return nil, false, fmt.Errorf("%s rejected the credentials — the token may be expired or revoked; sign in again with `cb login %s`", c.server, c.server)
+	case resp.StatusCode != http.StatusOK:
+		return nil, false, fmt.Errorf("%s answered %s: %s", c.server, resp.Status, apiErrorMessage(raw))
+	}
+	return raw, true, nil
 }
 
 func (c *client) post(ctx context.Context, body []byte) (*http.Response, []byte, error) {

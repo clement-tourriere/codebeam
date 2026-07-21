@@ -200,11 +200,17 @@ func (f *fakeCodebeam) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req struct {
+			ID     json.RawMessage `json:"id"`
 			Params struct {
 				Name string `json:"name"`
 			} `json:"params"`
 		}
 		json.NewDecoder(r.Body).Decode(&req) // nolint:errcheck
+		if len(req.ID) == 0 {
+			// Notifications get 202 with no body, like the real transport.
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		f.toolCalled = req.Params.Name
 		json.NewEncoder(w).Encode(map[string]any{ // nolint:errcheck
 			"jsonrpc": "2.0", "id": 1,
@@ -353,6 +359,56 @@ func TestToolErrorSurfacesAsExitOne(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "query is required") {
 		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+// --- MCP stdio proxy ---
+
+func TestMCPProxyForwardsMessages(t *testing.T) {
+	fake, srv := newFakeCodebeam(t)
+	a, stdout, stderr := testApp(t)
+	t.Setenv(envToken, "cba_1") // the fake accepts whatever equals f.access
+	t.Setenv(envServer, srv.URL)
+	a.stdin = strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_repos","arguments":{}}}` + "\n" +
+			`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n")
+
+	if code := a.run([]string{"mcp"}); code != 0 {
+		t.Fatalf("mcp exit %d, stderr: %s", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 response line (the notification answers nothing), got %d: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], `"id":1`) || !strings.Contains(lines[0], "Indexed repositories") {
+		t.Fatalf("response: %s", lines[0])
+	}
+	if fake.toolCalled != "list_repos" {
+		t.Fatalf("called %q, want list_repos", fake.toolCalled)
+	}
+}
+
+func TestMCPProxyAnswersErrorsInBand(t *testing.T) {
+	_, srv := newFakeCodebeam(t)
+	a, stdout, stderr := testApp(t)
+	t.Setenv(envToken, "cbp_wrong")
+	t.Setenv(envServer, srv.URL)
+	a.stdin = strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"tools/list"}` + "\n")
+
+	if code := a.run([]string{"mcp"}); code != 0 {
+		t.Fatalf("mcp exit %d, stderr: %s", code, stderr.String())
+	}
+	var resp struct {
+		ID    int `json:"id"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &resp); err != nil {
+		t.Fatalf("output is not a JSON-RPC message: %q", stdout.String())
+	}
+	if resp.ID != 7 || !strings.Contains(resp.Error.Message, "cb login") {
+		t.Fatalf("error response: %+v", resp)
 	}
 }
 

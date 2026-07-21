@@ -72,6 +72,12 @@ curl -X POST https://codebeam.example.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_repos"}}'
 ```
 
+When the instance sits behind an SSO gateway like Cloudflare Access — where a direct HTTP connection never reaches Codebeam — register [`cb mcp`](/codebeam/cli/#one-command-for-agents-cb-mcp) instead: a stdio proxy to the same `/mcp` endpoint that reuses `cb login`'s credentials, gateway hop included:
+
+```sh
+claude mcp add codebeam -- cb mcp
+```
+
 ## Packed-context CLI
 
 `codebeam ctx` answers a question with a ready-to-paste context bundle: the most relevant files, trimmed to a character budget, each chunk cited as `repo:path@commit`. Pipe it into a prompt, or let a script call it before invoking a model:

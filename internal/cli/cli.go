@@ -35,6 +35,11 @@ Search commands:
   repos                     List indexed repositories
   stats                     Per-repository statistics (languages, size, freshness)
 
+Agent commands:
+  mcp                       Serve MCP over stdio, proxying to the server with
+                            cb's stored credentials (Cloudflare Access included):
+                            claude mcp add codebeam -- cb mcp
+
 Account commands:
   login [server]            Sign in via the browser, or --token <pat> for headless use
   logout [server]           Forget stored credentials
@@ -64,6 +69,7 @@ var errParse = errors.New("usage error")
 
 type app struct {
 	ctx    context.Context
+	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 	hc     *http.Client
@@ -78,6 +84,7 @@ type app struct {
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	a := &app{
 		ctx:    ctx,
+		stdin:  os.Stdin,
 		stdout: stdout,
 		stderr: stderr,
 		// Generous timeout: structural search walks whole repositories.
@@ -121,6 +128,8 @@ func (a *app) run(args []string) int {
 		err = a.cmdRepos(rest)
 	case "stats":
 		err = a.cmdStats(rest)
+	case "mcp":
+		err = a.cmdMCP(rest)
 	default:
 		fmt.Fprintf(a.stderr, "cb: unknown command %q — run `cb help`\n", cmd)
 		return 2

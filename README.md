@@ -39,6 +39,8 @@ Headless (agents, CI): set `CODEBEAM_URL` and `CODEBEAM_TOKEN` to a personal acc
 ```sh
 claude mcp add codebeam -- codebeam mcp                                  # local index, stdio
 claude mcp add --transport http codebeam https://your-host/mcp           # shared server, OAuth
+claude mcp add codebeam -- cb mcp                                        # shared server via cb login
+                                                                         # (works behind SSO gateways)
 ```
 
 Eight retrieval tools (search, symbols, references, AST patterns, file reading, stats) backed by the same engines as the web UI, scoped to each user's repositories. See [integrations](https://clement-tourriere.github.io/codebeam/integrations/).
