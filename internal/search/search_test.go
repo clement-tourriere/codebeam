@@ -130,16 +130,16 @@ func TestBuildZoektQueryFiltersReposByProviderAndFreshness(t *testing.T) {
 func TestBuildZoektQueryFiltersReposBySource(t *testing.T) {
 	query, err := BuildZoektQuery(Request{
 		Query:        "TODO",
-		SourceFilter: "gitlab.gitguardian.ovh",
+		SourceFilter: "gitlab.acme.dev",
 		Allowed: []store.Repo{
-			{FullName: "gitlab.gitguardian.ovh/deveff/renovate-sandbox", HostProvider: "gitlab:https://gitlab.gitguardian.ovh"},
+			{FullName: "gitlab.acme.dev/platform/sandbox", HostProvider: "gitlab:https://gitlab.acme.dev"},
 			{FullName: "github.com/acme/api", HostProvider: "github"},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(query, "repo:^gitlab\\.gitguardian\\.ovh/deveff/renovate-sandbox$") || strings.Contains(query, "github.com/acme/api") {
+	if !strings.Contains(query, "repo:^gitlab\\.acme\\.dev/platform/sandbox$") || strings.Contains(query, "github.com/acme/api") {
 		t.Fatalf("query did not restrict repos by source: %q", query)
 	}
 }
@@ -448,7 +448,7 @@ func TestSearchNormalizesCaseAndDiacritics(t *testing.T) {
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	src := "owners:\n  - clement.tourriere@gitguardian.com\n  - clément@example.com\n"
+	src := "owners:\n  - clement@acme.dev\n  - clément@example.com\n"
 	if err := os.WriteFile(filepath.Join(repoDir, "teams.yml"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}

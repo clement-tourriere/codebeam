@@ -428,10 +428,10 @@ func TestRepoFilterFromRequestDefaultsAndIgnoresTab(t *testing.T) {
 }
 
 func TestSourceMatchesSpecificProvider(t *testing.T) {
-	if !sourceMatches("gitlab:https://gitlab.gitguardian.ovh", "provider:gitlab:https://gitlab.gitguardian.ovh") {
+	if !sourceMatches("gitlab:https://gitlab.acme.dev", "provider:gitlab:https://gitlab.acme.dev") {
 		t.Fatal("expected exact self-managed GitLab provider to match")
 	}
-	if sourceMatches("gitlab:https://other.example", "provider:gitlab:https://gitlab.gitguardian.ovh") {
+	if sourceMatches("gitlab:https://other.example", "provider:gitlab:https://gitlab.acme.dev") {
 		t.Fatal("expected different self-managed GitLab provider not to match")
 	}
 	if !sourceMatches("gitlab:https://other.example", "family:gitlab") {
