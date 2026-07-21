@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # Not scratch: codebeam shells out to `git` for clone/fetch/read, and Universal
 # Ctags (Alpine's `ctags` package) enables symbol indexing. Both need a real OS.
 FROM alpine:3.22
-RUN apk add --no-cache git ca-certificates tzdata ctags su-exec \
+RUN apk add --no-cache git ca-certificates tzdata ctags su-exec tini \
     && adduser -D -u 1000 codebeam \
     && mkdir -p /data /config \
     && chown codebeam:codebeam /data /config
@@ -65,4 +65,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD wget -qO /dev/null http://127.0.0.1:8080/ || exit 1
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# Git may briefly detach helper processes (for example during fetch). Because a
+# container has no host init inside its PID namespace, tini must be PID 1 so
+# those orphaned children are reaped instead of accumulating as zombies.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
