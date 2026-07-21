@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -62,6 +63,71 @@ func TestRemoveRepoShardsDoesNotMatchRepoIDPrefixes(t *testing.T) {
 	for _, name := range []string{"repo_350_v16.00000.zoekt", "repo_351_v16.00000.zoekt"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("%s should not be removed: %v", name, err)
+		}
+	}
+}
+
+func TestFailedReindexKeepsPublishedShard(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "main.go"), []byte("package main\n// StableNeedle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(ctx, filepath.Join(root, "codebeam.db"), secretbox.MustNewCipher("codebeam-test-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	user, err := st.CreateDevUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.UpsertRepo(ctx, store.Repo{
+		HostProvider: "local", HostRepoID: source, Name: "source", FullName: "local/source",
+		DefaultBranch: "HEAD", LocalPath: source, Selected: true,
+	}, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexDir := filepath.Join(root, "index")
+	ix := New(config.Config{IndexDir: indexDir, RepoDir: filepath.Join(root, "repos"), IndexFileConcurrency: 1}, st)
+	if err := ix.Reindex(ctx, repo.ID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	shards, err := repoShardMatches(indexDir, repo.ID)
+	if err != nil || len(shards) != 1 {
+		t.Fatalf("published shards = %#v, err = %v", shards, err)
+	}
+	before, err := os.ReadFile(shards[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = ix.buildIndex(cancelled, *repo, source, []branchRevision{{Name: "HEAD", Version: "WORKTREE"}}, 0, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("failed build error = %v, want context.Canceled", err)
+	}
+	after, err := os.ReadFile(shards[0])
+	if err != nil {
+		t.Fatalf("previous shard disappeared after failed build: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("failed build replaced the previously published shard")
+	}
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "."+shardPrefix(repo.ID)+"-build-") {
+			t.Fatalf("staging directory was not cleaned up: %s", entry.Name())
 		}
 	}
 }

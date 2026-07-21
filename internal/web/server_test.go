@@ -6,12 +6,16 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ctourriere/codebeam/internal/config"
+	"github.com/ctourriere/codebeam/internal/indexer"
+	codesearch "github.com/ctourriere/codebeam/internal/search"
 	"github.com/ctourriere/codebeam/internal/secretbox"
 	"github.com/ctourriere/codebeam/internal/store"
 )
@@ -164,6 +168,110 @@ func TestCodeURLIncludesBranch(t *testing.T) {
 	got := codeURL(7, "internal/app.go", 12, []string{"dev"})
 	if got != "/code/7/internal/app.go?branch=dev&line=12" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSearchCodeURLPinsRemoteResultToCommit(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	got := searchCodeURL(codesearch.FileMatch{
+		RepoID: 7, Provider: "github", Path: "internal/app.go", Branches: []string{"dev"}, Commit: commit, CommitFromShard: true,
+	}, 12)
+	want := "/code/7/internal/app.go?branch=dev&commit=" + commit + "&line=12"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	fallback := searchCodeURL(codesearch.FileMatch{
+		RepoID: 7, Provider: "github", Path: "internal/app.go", Commit: commit,
+	}, 0)
+	if strings.Contains(fallback, "commit=") {
+		t.Fatalf("repository-level fallback commit must not pin a result, got %q", fallback)
+	}
+
+	local := searchCodeURL(codesearch.FileMatch{
+		RepoID: 8, Provider: "local", Path: "main.go", Branches: []string{"main"}, Commit: commit,
+	}, 0)
+	if strings.Contains(local, "commit=") {
+		t.Fatalf("local result must open the live worktree, got %q", local)
+	}
+}
+
+func TestHandleCodeReadsPinnedCommitDuringRemoteUpdate(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(root, "codebeam.db"), secretbox.MustNewCipher("codebeam-test-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	user, err := st.CreateDevUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.UpsertRepo(ctx, store.Repo{
+		HostProvider: "github", HostRepoID: "acme/repo", Name: "repo", FullName: "github.com/acme/repo",
+		CloneURL: "https://github.com/acme/repo.git", DefaultBranch: "main", IndexedBranches: "main", Selected: true,
+	}, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DataDir: root, IndexDir: filepath.Join(root, "index"), RepoDir: filepath.Join(root, "repos"),
+		TemplateGlob: filepath.Join("..", "..", "templates", "*.html"), SessionSecret: "test-secret", GitLabBaseURL: "https://gitlab.com",
+	}
+	worktree := filepath.Join(cfg.RepoDir, strconv.FormatInt(repo.ID, 10), "work")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init")
+	git("config", "user.email", "codebeam@example.test")
+	git("config", "user.name", "Codebeam Test")
+	git("checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(worktree, "legacy.toml"), []byte("legacy = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "legacy.toml")
+	git("commit", "-m", "old", "--no-gpg-sign")
+	oldCommit := git("rev-parse", "HEAD")
+
+	if err := os.Remove(filepath.Join(worktree, "legacy.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "current.toml"), []byte("current = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-m", "new", "--no-gpg-sign")
+	git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+	if err := st.MarkRepoIndexSucceeded(ctx, repo.ID, store.IndexResult{IndexedBranches: "main", Commit: oldCommit}); err != nil {
+		t.Fatal(err)
+	}
+	ix := indexer.New(cfg, st)
+	srv, err := New(cfg, st, ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/code/"+strconv.FormatInt(repo.ID, 10)+"/legacy.toml?branch=main&commit="+oldCommit, nil)
+	addSessionCookie(t, srv, req, user.ID)
+	rr := httptest.NewRecorder()
+	srv.route(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "legacy") {
+		t.Fatalf("pinned historical file was not rendered: %s", rr.Body.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,19 @@ import (
 	"github.com/ctourriere/codebeam/internal/secretbox"
 	"github.com/ctourriere/codebeam/internal/store"
 )
+
+func TestSearchDoesNotExposeTransientIndexPaths(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "index-does-not-exist")
+	_, err := (Engine{IndexDir: missing}).Search(context.Background(), Request{
+		Query: "needle", Allowed: []store.Repo{{FullName: "local/repo"}},
+	})
+	if !errors.Is(err, errIndexChanging) {
+		t.Fatalf("error = %v, want temporary index update error", err)
+	}
+	if strings.Contains(err.Error(), missing) || strings.Contains(err.Error(), ".zoekt") || strings.Contains(err.Error(), "lstat") {
+		t.Fatalf("internal index path leaked to user: %q", err)
+	}
+}
 
 func TestBuildZoektQueryScopesToAllowedRepos(t *testing.T) {
 	query, err := BuildZoektQuery(Request{
@@ -790,11 +804,16 @@ func TestSearchIncludesIndexedCommit(t *testing.T) {
 	if fresh.IndexedCommit != head {
 		t.Fatalf("repo IndexedCommit = %q, want %q", fresh.IndexedCommit, head)
 	}
-	result, err := (Engine{IndexDir: indexDir}).Search(ctx, Request{Query: "CommitNeedle", Allowed: []store.Repo{*fresh}})
+	// The shard is the source of truth for a match's revision. During atomic
+	// publication the database can briefly describe the preceding or following
+	// generation, so a DB-derived commit would make result links unstable.
+	allowed := *fresh
+	allowed.IndexedCommit = strings.Repeat("f", 40)
+	result, err := (Engine{IndexDir: indexDir}).Search(ctx, Request{Query: "CommitNeedle", Allowed: []store.Repo{allowed}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Files) != 1 || result.Files[0].Commit != head {
-		t.Fatalf("expected commit %q on the match, got %#v", head, result.Files)
+	if len(result.Files) != 1 || result.Files[0].Commit != head || !result.Files[0].CommitFromShard {
+		t.Fatalf("expected exact shard commit %q on the match, got %#v", head, result.Files)
 	}
 }

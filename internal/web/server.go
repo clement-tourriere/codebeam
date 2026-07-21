@@ -239,6 +239,7 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		"formatUnix":              formatUnix,
 		"sinceUnix":               sinceUnix,
 		"codeURL":                 codeURL,
+		"searchCodeURL":           searchCodeURL,
 		"statusClass":             statusClass,
 		"providerName":            providerName,
 		"canSyncProvider":         canSyncProvider,
@@ -1626,6 +1627,7 @@ func (s *Server) handleCode(w http.ResponseWriter, r *http.Request) {
 	}
 	root := s.indexer.SourceRoot(*repo)
 	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	commit := strings.TrimSpace(r.URL.Query().Get("commit"))
 	filePath, err := safeJoin(root, relPath)
 	if err != nil {
 		http.NotFound(w, r)
@@ -1633,7 +1635,20 @@ func (s *Server) handleCode(w http.ResponseWriter, r *http.Request) {
 	}
 	var content []byte
 	var symbols []indexer.FileSymbol
-	if branch != "" && repo.HostProvider != "local" {
+	if commit != "" && repo.HostProvider != "local" {
+		// Search-result links carry the exact revision reported by the shard.
+		// Read that immutable object instead of the moving branch ref so a file
+		// remains openable while (or just after) the repository is refreshed.
+		if !validGitObjectID(commit) {
+			http.NotFound(w, r)
+			return
+		}
+		content, err = readGitRevisionFile(r.Context(), root, commit, relPath)
+		if err != nil || len(content) > 4<<20 {
+			http.NotFound(w, r)
+			return
+		}
+	} else if branch != "" && repo.HostProvider != "local" {
 		if !repoHasIndexedBranch(*repo, branch) {
 			http.NotFound(w, r)
 			return
@@ -2508,8 +2523,24 @@ func readGitBranchFile(ctx context.Context, root, branch, relPath string) ([]byt
 	if branch != "HEAD" {
 		ref = "refs/remotes/origin/" + branch
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "show", ref+":"+filepath.ToSlash(relPath))
+	return readGitRevisionFile(ctx, root, ref, relPath)
+}
+
+func readGitRevisionFile(ctx context.Context, root, revision, relPath string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "show", revision+":"+filepath.ToSlash(relPath))
 	return cmd.Output()
+}
+
+func validGitObjectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func branchPrimary(branches []string) string {
@@ -2636,20 +2667,40 @@ func symbolDefLines(symbols []indexer.FileSymbol) map[string]int {
 }
 
 func codeURL(repoID int64, path string, line int, branchSets ...[]string) string {
-	segments := strings.Split(filepath.ToSlash(path), "/")
+	var branches []string
+	if len(branchSets) > 0 {
+		branches = branchSets[0]
+	}
+	return codeURLAtRevision(repoID, path, line, branches, "")
+}
+
+// searchCodeURL pins remote result links to the immutable commit embedded in
+// the Zoekt match. Local repositories intentionally keep opening the live
+// worktree, which is where their dirty matches came from.
+func searchCodeURL(file codesearch.FileMatch, line int) string {
+	commit := ""
+	if file.Provider != "local" && file.CommitFromShard && validGitObjectID(file.Commit) {
+		commit = file.Commit
+	}
+	return codeURLAtRevision(file.RepoID, file.Path, line, file.Branches, commit)
+}
+
+func codeURLAtRevision(repoID int64, filePath string, line int, branches []string, commit string) string {
+	segments := strings.Split(filepath.ToSlash(filePath), "/")
 	for i, segment := range segments {
 		segments[i] = url.PathEscape(segment)
 	}
 	u := fmt.Sprintf("/code/%d/%s", repoID, strings.Join(segments, "/"))
 	values := url.Values{}
-	if len(branchSets) > 0 {
-		for _, branch := range branchSets[0] {
-			branch = strings.TrimSpace(branch)
-			if branch != "" && branch != "HEAD" {
-				values.Set("branch", branch)
-				break
-			}
+	for _, branch := range branches {
+		branch = strings.TrimSpace(branch)
+		if branch != "" && branch != "HEAD" {
+			values.Set("branch", branch)
+			break
 		}
+	}
+	if validGitObjectID(commit) {
+		values.Set("commit", commit)
 	}
 	if line > 0 {
 		values.Set("line", strconv.Itoa(line))

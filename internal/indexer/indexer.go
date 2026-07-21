@@ -848,9 +848,20 @@ func (i *Indexer) fileConcurrency() int {
 
 func (i *Indexer) buildIndex(ctx context.Context, repo store.Repo, root string, branches []branchRevision, lastCommitAt int64, progress func(string)) (store.RepoContentStats, error) {
 	sendProgress(progress, "Building Zoekt index")
-	if err := removeRepoShards(i.cfg.IndexDir, repo.ID); err != nil {
+	// Build in a private subdirectory beneath the index directory. Zoekt writes
+	// randomly named .tmp files while a shard is being assembled; exposing those
+	// files beside the searchable shards lets a concurrent directory scan race
+	// their final rename. Keeping the previous shard live also means searches
+	// remain available for the entire reindex and a cancelled/failed build cannot
+	// destroy a good index.
+	if err := os.MkdirAll(i.cfg.IndexDir, 0o755); err != nil {
 		return store.RepoContentStats{}, err
 	}
+	stagingDir, err := os.MkdirTemp(i.cfg.IndexDir, "."+shardPrefix(repo.ID)+"-build-")
+	if err != nil {
+		return store.RepoContentStats{}, err
+	}
+	defer os.RemoveAll(stagingDir) // best-effort cleanup; the live shards are never inside it
 
 	repoBranches := make([]zoekt.RepositoryBranch, 0, len(branches))
 	for _, branch := range branches {
@@ -869,7 +880,7 @@ func (i *Indexer) buildIndex(ctx context.Context, repo store.Repo, root string, 
 	}
 	documentConcurrency := i.fileConcurrency()
 	opts := zindex.Options{
-		IndexDir:            i.cfg.IndexDir,
+		IndexDir:            stagingDir,
 		ShardPrefixOverride: shardPrefix(repo.ID),
 		Parallelism:         documentConcurrency,
 		// When empty, Zoekt still auto-detects `universal-ctags` on PATH; when set
@@ -916,6 +927,10 @@ func (i *Indexer) buildIndex(ctx context.Context, repo store.Repo, root string, 
 		return store.RepoContentStats{}, err
 	}
 	finished = true
+	sendProgress(progress, "Publishing Zoekt index")
+	if err := publishRepoShards(stagingDir, i.cfg.IndexDir, repo.ID); err != nil {
+		return store.RepoContentStats{}, err
+	}
 	return stats.stats, nil
 }
 
@@ -1354,13 +1369,76 @@ func shouldSkipPath(filePath string) bool {
 	return false
 }
 
+// publishRepoShards promotes a completed build into the live index directory.
+// stagingDir is created inside indexDir, so each rename is atomic. Existing
+// shards stay in place until their replacement is complete; extra shards from a
+// formerly larger index are removed only after every new shard is visible.
+func publishRepoShards(stagingDir, indexDir string, repoID int64) error {
+	staged, err := repoShardMatches(stagingDir, repoID)
+	if err != nil {
+		return err
+	}
+	if len(staged) == 0 {
+		return errors.New("Zoekt index build produced no shards")
+	}
+	old, err := repoShardMatches(indexDir, repoID)
+	if err != nil {
+		return err
+	}
+
+	published := make(map[string]struct{}, len(staged))
+	for _, source := range staged {
+		name := filepath.Base(source)
+		destination := filepath.Join(indexDir, name)
+
+		// A .meta sidecar overrides metadata embedded in a shard. Normal full
+		// builds do not create one, so remove any stale override before exposing
+		// the replacement shard. Keep support for one should Zoekt emit it later.
+		sourceMeta := source + ".meta"
+		destinationMeta := destination + ".meta"
+		if _, err := os.Stat(sourceMeta); err == nil {
+			if err := os.Rename(sourceMeta, destinationMeta); err != nil {
+				return fmt.Errorf("publish Zoekt shard metadata %s: %w", name, err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		} else if err := os.Remove(destinationMeta); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		if err := os.Rename(source, destination); err != nil {
+			return fmt.Errorf("publish Zoekt shard %s: %w", name, err)
+		}
+		published[name] = struct{}{}
+	}
+
+	for _, shard := range old {
+		if _, replaced := published[filepath.Base(shard)]; replaced {
+			continue
+		}
+		if err := removeShardArtifacts(shard); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func removeRepoShards(indexDir string, repoID int64) error {
 	matches, err := repoShardMatches(indexDir, repoID)
 	if err != nil {
 		return err
 	}
 	for _, match := range matches {
-		if err := os.Remove(match); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeShardArtifacts(match); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeShardArtifacts(shard string) error {
+	for _, artifact := range []string{shard, shard + ".meta"} {
+		if err := os.Remove(artifact); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

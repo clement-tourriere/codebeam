@@ -262,7 +262,7 @@
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-base-content/45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
-            <a class="min-w-0 truncate font-medium hover:text-primary hover:underline" href="{{codeURL .RepoID .Path 0 .Branches}}">{{.Path}}</a>
+            <a class="min-w-0 truncate font-medium hover:text-primary hover:underline" href="{{searchCodeURL . 0}}">{{.Path}}</a>
             {{if .Language}}<span class="badge badge-ghost badge-sm shrink-0">{{.Language}}</span>{{end}}
             {{if .Dirty}}<span class="badge badge-warning badge-sm shrink-0" title="This match comes from a file with uncommitted local changes">dirty</span>{{end}}
           </div>
@@ -300,12 +300,12 @@
       <div class="min-w-max py-1 font-mono text-[13px]">
         {{range .Lines}}
         {{range .Before}}
-        <a class="code-line code-line-ctx px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+        <a class="code-line code-line-ctx px-4" href="{{searchCodeURL $file .Number}}">
           <span class="code-line-number pr-4 text-right text-base-content/40">{{.Number}}</span>
           <pre class="min-w-0 overflow-visible whitespace-pre">{{.Text}}</pre>
         </a>
         {{end}}
-        <a class="code-line code-line-match px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+        <a class="code-line code-line-match px-4" href="{{searchCodeURL $file .Number}}">
           <span class="code-line-number pr-4 text-right text-base-content/60">{{.Number}}</span>
           <pre class="min-w-0 overflow-visible whitespace-pre">{{range .Segments}}{{if .Match}}<mark class="rounded-sm bg-warning/40 px-0.5">{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</pre>
         </a>
@@ -317,7 +317,7 @@
         </div>
         {{end}}
         {{range .After}}
-        <a class="code-line code-line-ctx px-4" href="{{codeURL $file.RepoID $file.Path .Number $file.Branches}}">
+        <a class="code-line code-line-ctx px-4" href="{{searchCodeURL $file .Number}}">
           <span class="code-line-number pr-4 text-right text-base-content/40">{{.Number}}</span>
           <pre class="min-w-0 overflow-visible whitespace-pre">{{.Text}}</pre>
         </a>

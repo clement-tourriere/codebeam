@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"os"
 	"os/exec"
 	"path"
 	"regexp"
@@ -57,6 +58,54 @@ type collectedFileMatch struct {
 
 type Engine struct {
 	IndexDir string
+}
+
+var errIndexChanging = errors.New("search index changed during an update; please retry")
+
+// openDirectorySearcher tolerates a shard being atomically replaced between a
+// directory scan and Zoekt opening it. Reindexing publishes with renames, so an
+// ENOENT here is transient; retrying prevents an internal filesystem race from
+// leaking into the search UI.
+func openDirectorySearcher(ctx context.Context, indexDir string) (zoekt.Streamer, error) {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		searcher, err := zsearch.NewDirectorySearcher(indexDir)
+		if err == nil {
+			return searcher, nil
+		}
+		lastErr = err
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if attempt == 3 {
+			break
+		}
+		delay := time.Duration(5*(1<<attempt)) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if errors.Is(lastErr, os.ErrNotExist) {
+		return nil, errIndexChanging
+	}
+	return nil, lastErr
+}
+
+func indexedCommit(version, fallback string) string {
+	version = strings.TrimSpace(version)
+	if version == "" || version == "WORKTREE" {
+		return strings.TrimSpace(fallback)
+	}
+	return version
+}
+
+func commitComesFromShard(version string) bool {
+	version = strings.TrimSpace(version)
+	return version != "" && version != "WORKTREE"
 }
 
 type Request struct {
@@ -118,8 +167,12 @@ type FileMatch struct {
 	// Commit is the indexed commit hash for file:line@commit provenance; empty
 	// for non-git sources. A Dirty match may differ from this commit.
 	Commit string
-	Dirty  bool
-	Lines  []LineMatch
+	// CommitFromShard means Commit came from this match's Zoekt shard rather
+	// than repository-level fallback metadata. Remote details links can safely
+	// pin that immutable revision while an update is being published.
+	CommitFromShard bool
+	Dirty           bool
+	Lines           []LineMatch
 }
 
 type LineMatch struct {
@@ -170,8 +223,11 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 		return Result{EmptyReason: "No indexed repositories are available for this search."}, nil
 	}
 
-	searcher, err := zsearch.NewDirectorySearcher(e.IndexDir)
+	searcher, err := openDirectorySearcher(ctx, e.IndexDir)
 	if err != nil {
+		if errors.Is(err, errIndexChanging) {
+			return Result{}, err
+		}
 		return Result{}, fmt.Errorf("open Zoekt index: %w", err)
 	}
 	defer searcher.Close()
@@ -257,18 +313,19 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 			continue
 		}
 		match := FileMatch{
-			RepoID:     repo.ID,
-			Repository: file.Repository,
-			RepoName:   repoName,
-			Provider:   repo.HostProvider,
-			Branches:   normalizedBranches(file.Branches, repo.DefaultBranch),
-			Path:       file.FileName,
-			Language:   file.Language,
-			Score:      file.Score,
-			IndexedAt:  repo.IndexedAt,
-			Commit:     repo.IndexedCommit,
-			Dirty:      dirty,
-			Lines:      lineMatches(file.LineMatches, symbolKindFilter, false),
+			RepoID:          repo.ID,
+			Repository:      file.Repository,
+			RepoName:        repoName,
+			Provider:        repo.HostProvider,
+			Branches:        normalizedBranches(file.Branches, repo.DefaultBranch),
+			Path:            file.FileName,
+			Language:        file.Language,
+			Score:           file.Score,
+			IndexedAt:       repo.IndexedAt,
+			Commit:          indexedCommit(file.Version, repo.IndexedCommit),
+			CommitFromShard: commitComesFromShard(file.Version),
+			Dirty:           dirty,
+			Lines:           lineMatches(file.LineMatches, symbolKindFilter, false),
 		}
 		if len(match.Lines) == 0 {
 			continue
