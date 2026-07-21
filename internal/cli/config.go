@@ -42,6 +42,9 @@ type credentials struct {
 	// TokenEndpoint is remembered from login-time discovery so a refresh
 	// never needs another discovery round-trip.
 	TokenEndpoint string `json:"token_endpoint,omitempty"`
+	// CFAccess records that the server sits behind Cloudflare Access, so
+	// every request must carry an Access credential (see cfaccess.go).
+	CFAccess bool `json:"cf_access,omitempty"`
 }
 
 func (c *credentials) bearer() string {

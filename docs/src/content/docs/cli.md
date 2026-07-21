@@ -38,6 +38,34 @@ export CODEBEAM_TOKEN=cbp_…                   # no login at all
 
 `cb status` shows which server and credentials a command would use; `cb logout` forgets a server's stored credentials.
 
+## Behind Cloudflare Access
+
+Company instances are often fronted by [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) (Zero Trust SSO via Okta, Entra ID, …), which intercepts every request before it reaches Codebeam. `cb` handles this by itself: `cb login` detects the gateway, sends your browser through the identity provider, and from then on attaches the Access token to every request automatically — no flags, no configuration.
+
+The browser hand-off uses Cloudflare's own `cloudflared` CLI, so it must be installed once:
+
+```sh
+# macOS
+brew install cloudflared
+
+# Linux (any distro, direct binary; use arm64 instead of amd64 on ARM)
+sudo curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared
+```
+
+Debian/RPM packages are also available from [pkg.cloudflare.com](https://pkg.cloudflare.com/). If `cloudflared` is missing, `cb login` says exactly that instead of failing cryptically.
+
+After login, nothing else changes: search commands reuse `cloudflared`'s cached token silently, and `cb status` shows a `Gate: Cloudflare Access` line. When the Access session eventually expires (your company's SSO session policy), any command tells you to run `cb login` again — `cb` never opens a browser on its own outside of `login`, so scripts and agents get a clear error rather than a surprise window.
+
+Headless machines (CI, agents) skip `cloudflared` entirely: ask your Cloudflare administrator for a [service token](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) and export it —
+
+```sh
+export CF_ACCESS_CLIENT_ID=….access
+export CF_ACCESS_CLIENT_SECRET=…
+```
+
+combined with `CODEBEAM_TOKEN`, every command works with no login and no browser. Servers that are not behind Cloudflare Access are untouched by all of this — detection happens once at login and changes nothing when no gateway answers.
+
 ## Commands
 
 | Command | What you get |

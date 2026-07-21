@@ -44,6 +44,9 @@ Account commands:
 Server selection: --server flag > CODEBEAM_URL > last login > http://localhost:8080
 Headless auth:    set CODEBEAM_TOKEN to a personal access token
                   (web UI: Settings -> API tokens) — no login needed.
+Cloudflare Access: detected automatically; login uses the cloudflared CLI,
+                  or set CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET
+                  to a service token for headless use.
 
 Examples:
   cb login codebeam.acme.dev
@@ -66,6 +69,9 @@ type app struct {
 	hc     *http.Client
 	// openURL launches the browser during login; injectable for tests.
 	openURL func(string) error
+	// cfCredentials obtains Cloudflare Access headers for a protected server;
+	// injectable for tests.
+	cfCredentials func(ctx context.Context, server string, interactive bool, out io.Writer) (http.Header, error)
 }
 
 // Run executes one cb invocation and returns its process exit code.
@@ -75,8 +81,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		stdout: stdout,
 		stderr: stderr,
 		// Generous timeout: structural search walks whole repositories.
-		hc:      &http.Client{Timeout: 120 * time.Second},
-		openURL: openBrowser,
+		hc:            &http.Client{Timeout: 120 * time.Second},
+		openURL:       openBrowser,
+		cfCredentials: cfAccessCredentials,
 	}
 	return a.run(args)
 }
@@ -190,11 +197,22 @@ func (a *app) toolClient(flagServer string) (*client, error) {
 	if creds == nil {
 		return nil, fmt.Errorf("not logged in to %s — run `cb login %s`, or set %s to a personal access token", server, server, envToken)
 	}
+	hc := a.hc
+	// The stored login remembers when the server sits behind Cloudflare
+	// Access; a service token in the environment covers pure-env (CI) use
+	// where nothing is stored.
+	if stored := cf.Servers[server]; creds.CFAccess || cfServiceTokenSet() || (stored != nil && stored.CFAccess) {
+		headers, err := a.cfCredentials(a.ctx, server, false, io.Discard)
+		if err != nil {
+			return nil, err
+		}
+		hc = withExtraHeaders(a.hc, server, headers)
+	}
 	persist := func(c *credentials) error {
 		cf.Servers[server] = c
 		return saveConfig(cf)
 	}
-	return &client{server: server, creds: creds, hc: a.hc, persist: persist}, nil
+	return &client{server: server, creds: creds, hc: hc, persist: persist}, nil
 }
 
 // printTool calls one tool and writes its text to stdout, guaranteeing a
@@ -468,16 +486,22 @@ func (a *app) cmdLogin(args []string) error {
 		return err
 	}
 
-	var creds *credentials
-	if strings.TrimSpace(*token) != "" {
-		creds = &credentials{Kind: "token", Token: strings.TrimSpace(*token)}
-	} else if creds, err = loginBrowser(a.ctx, a.hc, resolved, a.openURL, a.stdout); err != nil {
+	hc, cfProtected, err := a.accessAwareClient(a.ctx, resolved, true, a.stdout)
+	if err != nil {
 		return err
 	}
 
+	var creds *credentials
+	if strings.TrimSpace(*token) != "" {
+		creds = &credentials{Kind: "token", Token: strings.TrimSpace(*token)}
+	} else if creds, err = loginBrowser(a.ctx, hc, resolved, a.openURL, a.stdout); err != nil {
+		return err
+	}
+	creds.CFAccess = cfProtected
+
 	// Verify before saving, so a typoed token or wrong server fails loudly now
 	// rather than on the first real search.
-	probe := &client{server: resolved, creds: creds, hc: a.hc}
+	probe := &client{server: resolved, creds: creds, hc: hc}
 	summary, err := probe.callTool(a.ctx, "list_repos", map[string]any{})
 	if err != nil {
 		return fmt.Errorf("login verification against %s failed: %w", resolved, err)
@@ -558,6 +582,9 @@ func (a *app) cmdStatus(args []string) error {
 		fmt.Fprintln(a.stdout, "Auth:   personal access token (stored)")
 	default:
 		fmt.Fprintf(a.stdout, "Auth:   OAuth (%s)\n", oauthExpiryLabel(creds))
+	}
+	if stored := cf.Servers[resolved]; stored != nil && stored.CFAccess {
+		fmt.Fprintln(a.stdout, "Gate:   Cloudflare Access (token attached automatically)")
 	}
 
 	c, err := a.toolClient(*server)

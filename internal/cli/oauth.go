@@ -189,6 +189,9 @@ func registerClient(ctx context.Context, hc *http.Client, endpoint, redirectURI 
 		return "", fmt.Errorf("cannot reach %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close() // nolint:errcheck
+	if blockedByCFAccess(resp) {
+		return "", errors.New("Cloudflare Access intercepted the registration request — run `cb login` again to refresh the Access session")
+	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("client registration failed: %s", oauthErrorMessage(resp.StatusCode, raw))
@@ -235,6 +238,9 @@ func postTokenForm(ctx context.Context, hc *http.Client, endpoint string, form u
 		return nil, fmt.Errorf("cannot reach %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close() // nolint:errcheck
+	if blockedByCFAccess(resp) {
+		return nil, errors.New("Cloudflare Access intercepted the token request — run `cb login` again to refresh the Access session")
+	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("token request failed: %s", oauthErrorMessage(resp.StatusCode, raw))

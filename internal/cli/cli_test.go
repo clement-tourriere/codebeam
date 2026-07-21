@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -352,5 +353,127 @@ func TestToolErrorSurfacesAsExitOne(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "query is required") {
 		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+// --- Cloudflare Access ---
+
+func TestIsCFAccessHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"acme.cloudflareaccess.com": true,
+		"cloudflareaccess.com":      true,
+		"Acme.CloudflareAccess.com": true,
+		"codebeam.paas.acme.dev":    false,
+		"evilcloudflareaccess.com":  false,
+	} {
+		if got := isCFAccessHost(host); got != want {
+			t.Errorf("isCFAccessHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// protectedCodebeam fronts a fakeCodebeam the way a Cloudflare Access gateway
+// does: requests without the expected Access token are redirected to the
+// gateway's login page instead of reaching the app. cfAccessDomain is pointed
+// at the gateway's host for the duration of the test.
+func protectedCodebeam(t *testing.T, token string) (*fakeCodebeam, *httptest.Server) {
+	t.Helper()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html>SSO login required</html>") // nolint:errcheck
+	}))
+	t.Cleanup(gateway.Close)
+
+	f := &fakeCodebeam{t: t, mu: make(chan struct{}, 1), access: "cba_1", refresh: "cbr_1"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cf-Access-Token") != token {
+			http.Redirect(w, r, gateway.URL+"/login", http.StatusFound)
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	f.base = srv.URL
+	t.Cleanup(srv.Close)
+
+	old := cfAccessDomain
+	cfAccessDomain = strings.TrimPrefix(gateway.URL, "http://")
+	t.Cleanup(func() { cfAccessDomain = old })
+	return f, srv
+}
+
+// cfBrowser is browserFollowingRedirects with the Access token a real
+// browser's gateway cookie would carry.
+func cfBrowser(t *testing.T, token string) func(string) error {
+	return func(authorizeURL string) error {
+		go func() {
+			req, err := http.NewRequest(http.MethodGet, authorizeURL, nil)
+			if err != nil {
+				t.Errorf("browser: %v", err)
+				return
+			}
+			req.Header.Set("Cf-Access-Token", token)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Errorf("browser: %v", err)
+				return
+			}
+			resp.Body.Close() // nolint:errcheck
+		}()
+		return nil
+	}
+}
+
+func TestCloudflareAccessLoginAndSearch(t *testing.T) {
+	fake, srv := protectedCodebeam(t, "cfjwt_test")
+	a, stdout, stderr := testApp(t)
+	a.openURL = cfBrowser(t, "cfjwt_test")
+	var interactives []bool
+	a.cfCredentials = func(_ context.Context, server string, interactive bool, _ io.Writer) (http.Header, error) {
+		if server != srv.URL {
+			t.Errorf("cfCredentials for %q, want %q", server, srv.URL)
+		}
+		interactives = append(interactives, interactive)
+		return http.Header{"Cf-Access-Token": {"cfjwt_test"}}, nil
+	}
+
+	if code := a.run([]string{"login", srv.URL}); code != 0 {
+		t.Fatalf("login exit %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "protected by Cloudflare Access") {
+		t.Fatalf("login output missing the Access note: %s", stdout.String())
+	}
+	if len(interactives) != 1 || !interactives[0] {
+		t.Fatalf("credential acquisitions during login: %v, want one interactive", interactives)
+	}
+	saved, _ := loadConfig()
+	if !saved.Servers[srv.URL].CFAccess {
+		t.Fatalf("stored credentials not marked cf_access: %+v", saved.Servers[srv.URL])
+	}
+
+	// A later invocation re-acquires the Access header non-interactively.
+	stdout.Reset()
+	if code := a.run([]string{"search", "foo"}); code != 0 {
+		t.Fatalf("search exit %d, stderr: %s", code, stderr.String())
+	}
+	if fake.toolCalled != "search_code" {
+		t.Fatalf("called %q, want search_code", fake.toolCalled)
+	}
+	if last := interactives[len(interactives)-1]; last {
+		t.Fatal("tool call acquired Access credentials interactively")
+	}
+}
+
+func TestCloudflareAccessBlockedToolCallExplains(t *testing.T) {
+	_, srv := protectedCodebeam(t, "cfjwt_test")
+	a, _, stderr := testApp(t)
+	t.Setenv(envToken, "cbp_x")
+	t.Setenv(envServer, srv.URL)
+
+	// Nothing marks the server as protected and no Access credential exists,
+	// so the gateway swallows the call — the error must say so.
+	if code := a.run([]string{"repos"}); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "Cloudflare Access") || !strings.Contains(stderr.String(), "cb login") {
+		t.Fatalf("stderr missing the Cloudflare Access hint: %s", stderr.String())
 	}
 }

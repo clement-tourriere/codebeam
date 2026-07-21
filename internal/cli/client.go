@@ -85,6 +85,9 @@ func (c *client) post(ctx context.Context, body []byte) (*http.Response, []byte,
 		return nil, nil, fmt.Errorf("cannot reach %s: %w", c.server, err)
 	}
 	defer resp.Body.Close() // nolint:errcheck
+	if blockedByCFAccess(resp) {
+		return nil, nil, fmt.Errorf("Cloudflare Access intercepted the request to %s (Access session missing or expired) — run `cb login %s`", c.server, c.server)
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, nil, err
