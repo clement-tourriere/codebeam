@@ -254,7 +254,7 @@ func TestHandleCodeReadsPinnedCommitDuringRemoteUpdate(t *testing.T) {
 	}
 	git := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd := exec.Command("git", append([]string{"-C", worktree, "-c", "core.hooksPath=/dev/null"}, args...)...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)

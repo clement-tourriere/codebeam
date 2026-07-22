@@ -522,7 +522,7 @@ func TestSearchHonorsRemoteMultiBranchIndex(t *testing.T) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v: %s", args, err, strings.TrimSpace(string(out)))
@@ -847,7 +847,7 @@ func TestSearchIncludesIndexedCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	git := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		cmd := exec.Command("git", append([]string{"-C", repoDir, "-c", "core.hooksPath=/dev/null"}, args...)...)
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
