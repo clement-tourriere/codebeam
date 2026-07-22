@@ -31,10 +31,11 @@
     {{if $chips}}
     <div class="mt-3 flex flex-wrap items-center gap-1.5">
       {{range $chips}}
-      <span class="filter-chip">
+      <span class="filter-chip {{if .Excluded}}filter-chip-excluded{{end}}">
+        {{if .Excluded}}<svg xmlns="http://www.w3.org/2000/svg" class="filter-chip-exclude-icon h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>{{end}}
         <span class="filter-chip-field">{{.Field}}</span>
         <span class="filter-chip-value" title="{{.Value}}">{{.Value}}</span>
-        <a class="filter-chip-remove" href="{{.RemoveURL}}" title="Remove this filter" aria-label="Remove {{.Field}} filter {{.Value}}">
+        <a class="filter-chip-remove" href="{{.RemoveURL}}" title="Remove this {{if .Excluded}}exclusion{{else}}filter{{end}}" aria-label="Remove {{if .Excluded}}excluded {{end}}{{.Field}} filter {{.Value}}">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </a>
       </span>
@@ -52,8 +53,17 @@
     {{if .Params.Dirty}}<input type="hidden" name="dirty" value="{{.Params.Dirty}}">{{end}}
     {{if .Params.SymbolKind}}<input type="hidden" name="symbol_kind" value="{{.Params.SymbolKind}}">{{end}}
     {{if .Params.Freshness}}<input type="hidden" name="freshness" value="{{.Params.Freshness}}">{{end}}
+    {{range .Params.Exclude.Sources}}<input type="hidden" name="exclude_source" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Branches}}<input type="hidden" name="exclude_branch" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Languages}}<input type="hidden" name="exclude_lang" value="{{.}}">{{end}}
+    {{range .Params.Exclude.TopPaths}}<input type="hidden" name="exclude_top" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Extensions}}<input type="hidden" name="exclude_ext" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Providers}}<input type="hidden" name="exclude_provider" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Dirty}}<input type="hidden" name="exclude_dirty" value="{{.}}">{{end}}
+    {{range .Params.Exclude.SymbolKinds}}<input type="hidden" name="exclude_symbol_kind" value="{{.}}">{{end}}
+    {{range .Params.Exclude.Freshness}}<input type="hidden" name="exclude_freshness" value="{{.}}">{{end}}
 
-    <details class="group mt-3" {{if or .Params.Repos .Params.Repo .Params.Path .Params.Normalized .Params.Symbols (and .Params.Sort (ne .Params.Sort "relevance"))}}open{{end}}>
+    <details class="group mt-3" {{if or (activeSearchFilterCount .BasePath .Params) .Params.Normalized .Params.Symbols (and .Params.Sort (ne .Params.Sort "relevance"))}}open{{end}}>
       <summary class="flex w-fit cursor-pointer select-none list-none items-center gap-1.5 rounded-field px-1 py-0.5 text-sm font-medium text-base-content/70 transition hover:text-base-content [&::-webkit-details-marker]:hidden">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
         Scope &amp; options
@@ -74,32 +84,38 @@
             </div>
             <div class="hidden" data-repo-combobox-hidden>
               {{range .Params.Repos}}<input type="hidden" name="repo" value="{{.}}">{{end}}
+              {{range .Params.Exclude.Repos}}<input type="hidden" name="exclude_repo" value="{{.}}">{{end}}
             </div>
             <div id="search-repo-options" class="search-combobox-menu absolute left-0 right-0 top-full z-40 mt-2 hidden overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-xl" role="listbox" data-repo-combobox-menu>
-              <div class="border-b border-base-300 px-3 py-2 text-xs font-medium text-base-content/60">Add repositories (OR)</div>
-              <div class="max-h-80 overflow-y-auto p-1" data-repo-combobox-list>
-                <button type="button" class="search-repo-option flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition hover:bg-base-200 focus:bg-base-200 focus:outline-none" role="option" data-repo-option data-value="" data-label="All indexed repositories" data-search="all indexed repositories">
+              <div class="border-b border-base-300 px-3 py-2 text-xs font-medium text-base-content/60">Select a repository to include, or use <span class="font-semibold" aria-hidden="true">⊘</span> to exclude it</div>
+              <div class="max-h-80 space-y-1 overflow-y-auto p-1" data-repo-combobox-list>
+                <button type="button" class="search-repo-option flex w-full items-center justify-between gap-2 rounded-field px-3 py-2 text-left text-sm transition hover:bg-base-200 focus:bg-base-200 focus:outline-none" role="option" data-repo-option data-value="" data-label="All indexed repositories" data-search="all indexed repositories">
                   <span class="font-medium">All indexed repositories</span>
                   <span class="badge badge-ghost badge-sm">clear</span>
                 </button>
                 {{range .Repos}}
-                <button type="button" class="search-repo-option flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left text-sm transition hover:bg-base-200 focus:bg-base-200 focus:outline-none" role="option" title="{{.FullName}}" data-repo-option data-value="{{.FullName}}" data-label="{{repoOptionLabel .}}" data-search="{{repoOptionLabel .}} {{repoTitle .}} {{repoSubtitle .}} {{.FullName}} {{providerName .HostProvider}} {{.BranchLabel}}">
-                  <span class="min-w-0 flex-1">
-                    <span class="block truncate font-medium">{{repoTitle .}}</span>
-                    <span class="block truncate font-mono text-xs text-base-content/55">{{repoSubtitle .}}</span>
-                  </span>
-                  <span class="flex shrink-0 flex-col items-end gap-1">
-                    <span class="badge badge-ghost badge-xs">{{providerName .HostProvider}}</span>
-                    {{if .BranchLabel}}<span class="badge badge-outline badge-xs max-w-24 truncate" title="Indexed branches">{{.BranchLabel}}</span>{{end}}
-                  </span>
-                </button>
+                <div class="facet-option" data-repo-option-row>
+                  <button type="button" class="facet-option-value flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-left text-sm" role="option" title="Include {{.FullName}}" data-repo-option data-value="{{.FullName}}" data-label="{{repoOptionLabel .}}" data-search="{{repoOptionLabel .}} {{repoTitle .}} {{repoSubtitle .}} {{.FullName}} {{providerName .HostProvider}} {{.BranchLabel}}">
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate font-medium">{{repoTitle .}}</span>
+                      <span class="block truncate font-mono text-xs text-base-content/55">{{repoSubtitle .}}</span>
+                    </span>
+                    <span class="flex shrink-0 flex-col items-end gap-1">
+                      <span class="badge badge-ghost badge-xs">{{providerName .HostProvider}}</span>
+                      {{if .BranchLabel}}<span class="badge badge-outline badge-xs max-w-24 truncate" title="Indexed branches">{{.BranchLabel}}</span>{{end}}
+                    </span>
+                  </button>
+                  <button type="button" class="facet-option-action" data-repo-exclude data-value="{{.FullName}}" data-label="{{repoOptionLabel .}}" title="Exclude {{.FullName}}" aria-label="Exclude {{repoTitle .}}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+                  </button>
+                </div>
                 {{end}}
               </div>
               <div class="hidden px-3 py-6 text-center text-sm text-base-content/60" data-repo-combobox-empty>No repositories match. Keep typing or clear the field.</div>
               <div class="border-t border-base-300 px-3 py-2 text-xs text-base-content/50" data-repo-combobox-status></div>
             </div>
           </div>
-          <p class="mt-1 text-xs text-base-content/45">Choose more than one repo to search them together with OR.</p>
+          <p class="mt-1 text-xs text-base-content/45">Included repositories are combined with OR. Exclude one or more to hide them from results.</p>
         </div>
         <label class="form-control min-w-0">
           <span class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">Path</span>
@@ -219,7 +235,7 @@
         <a class="btn btn-ghost btn-xs" href="{{clearSearchFiltersURL .BasePath .Params}}">Clear</a>
         {{end}}
       </div>
-      <p class="mt-1 text-xs text-base-content/50">{{if .Result.FacetsTruncated}}Counts cover the first {{.Result.FacetedFileCount}} of {{.Result.FileCount}} matched files.{{else}}Counts cover all matched files.{{end}}</p>
+      <p class="mt-1 text-xs text-base-content/50">{{if .Result.FacetsTruncated}}Counts cover the first {{.Result.FacetedFileCount}} of {{.Result.FileCount}} matched files.{{else}}Counts cover all matched files.{{end}} Select a value to include it; use <span class="font-semibold" aria-hidden="true">⊘</span> to exclude it.</p>
     </div>
     {{range .Result.Facets}}
     {{if showFacetGroup $.BasePath .}}
@@ -237,14 +253,27 @@
       {{end}}
       <div class="max-h-72 space-y-1 overflow-y-auto pr-1" data-facet-values>
         {{range .Values}}
-        <a class="flex items-start justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-base-200 {{if .Active}}bg-primary/10 text-primary{{end}}" href="{{facetURL $.BasePath $.Params $group.Field .Value}}" data-facet-value data-search="{{.Label}} {{.Value}}">
-          {{if eq $group.Field "repo"}}
-          <span class="min-w-0 flex-1 break-words font-mono text-xs leading-snug" title="{{.Value}}">{{.Label}}</span>
-          {{else}}
-          <span class="min-w-0 truncate" title="{{.Value}}">{{.Label}}</span>
-          {{end}}
-          <span class="badge badge-sm shrink-0 {{if .Active}}badge-primary{{else}}badge-ghost{{end}}">{{.Count}}</span>
-        </a>
+        <div class="facet-option {{if .Active}}facet-option-active{{else if .Excluded}}facet-option-excluded{{end}}" data-facet-value data-search="{{.Label}} {{.Value}}">
+          <a class="facet-option-value flex min-w-0 flex-1 items-start justify-between gap-2 px-2 py-1.5 text-sm" href="{{facetURL $.BasePath $.Params $group.Field .Value}}" title="{{if .Active}}Remove included value{{else}}Include this value{{end}}">
+            {{if eq $group.Field "repo"}}
+            <span class="min-w-0 flex-1 break-words font-mono text-xs leading-snug" title="{{.Value}}">{{.Label}}</span>
+            {{else}}
+            <span class="min-w-0 truncate" title="{{.Value}}">{{.Label}}</span>
+            {{end}}
+            {{if .Excluded}}
+            <span class="badge badge-error badge-outline badge-sm shrink-0">excluded</span>
+            {{else}}
+            <span class="badge badge-sm shrink-0 {{if .Active}}badge-primary{{else}}badge-ghost{{end}}">{{.Count}}</span>
+            {{end}}
+          </a>
+          <a class="facet-option-action shrink-0" href="{{facetExcludeURL $.BasePath $.Params $group.Field .Value}}" title="{{if .Excluded}}Stop excluding {{.Label}}{{else}}Exclude {{.Label}}{{end}}" aria-label="{{if .Excluded}}Stop excluding{{else}}Exclude{{end}} {{.Label}}">
+            {{if .Excluded}}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            {{else}}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+            {{end}}
+          </a>
+        </div>
         {{end}}
         <div class="hidden px-2 py-3 text-center text-xs text-base-content/50" data-facet-empty>No values match.</div>
       </div>
@@ -329,7 +358,7 @@
   {{else}}
   <div class="rounded-box border border-dashed border-base-300 bg-base-100 p-10 text-center shadow-sm">
     <h2 class="text-lg font-semibold">No matches found</h2>
-    <p class="mx-auto mt-2 max-w-md text-sm text-base-content/60">Try a broader query, clear a repository/path filter, or turn off symbol-only search.</p>
+    <p class="mx-auto mt-2 max-w-md text-sm text-base-content/60">Try a broader query, remove an include/exclude filter, or turn off symbol-only search.</p>
     {{if activeSearchFilterCount $.BasePath $.Params}}
     <a class="btn btn-outline btn-sm mt-4" href="{{clearSearchFiltersURL $.BasePath $.Params}}">Clear filters</a>
     {{end}}

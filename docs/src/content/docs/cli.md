@@ -90,7 +90,9 @@ This is the way through for agents when the instance sits behind an SSO gateway 
 | `cb repos` | What is indexed, and how fresh. |
 | `cb stats` | Languages, sizes, freshness per repository. |
 
-Search commands share the filters `--repo`, `--path`, `--lang` and `-n` (max files); `cb ast` adds `--branch`. Every command accepts `--server` to target a specific instance, and flags may come before or after the arguments.
+`cb search` exposes the web UI's facets from the terminal. Positive filters include `--repo` (repeat it to OR repositories), `--branch`, `--top-path`, `--ext`, `--lang`, `--source`, `--provider`, `--dirty`, `--symbol-kind`, and `--freshness`. Add the `--exclude-` prefix to remove buckets — for example `--exclude-repo`, `--exclude-lang`, or `--exclude-top-path`; every exclusion flag is repeatable. `--path` remains a regex filter, `--sort` changes ordering, and `-n` caps returned files. `cb ast` exposes the relevant repository/path/source/working-tree facets; `cb def` and `cb refs` accept repeatable repository and language includes/excludes.
+
+Pass `--facets` to print compact counts with the results. This makes an iterative shell workflow possible: run a broad faceted search, then copy the shown raw values into include/exclude flags. Every command accepts `--server` to target a specific instance, and flags may come before or after the arguments.
 
 `cb read` accepts a pasted citation unchanged — `cb read local/app:cmd/main.go@1a2b3c4d:12-40` reads lines 12–40, ignoring the commit suffix search results print.
 
@@ -99,6 +101,13 @@ Search commands share the filters `--repo`, `--path`, `--lang` and `-n` (max fil
 ```sh
 # Where is retry logic implemented, Go only, top 5 files?
 cb search "retry backoff" --lang go -n 5
+
+# Inspect facets, then remove noisy repositories and non-code languages
+cb search "TODO" --facets
+cb search "TODO" --exclude-repo local/vendor --exclude-lang Markdown --facets
+
+# Search two repos together while excluding generated code
+cb search "NewServer" --repo local/api --repo local/worker --exclude-top-path generated
 
 # Every Go error-swallowing pattern in one repo
 cb ast 'if $ERR != nil { return nil }' --lang go --repo local/app

@@ -56,6 +56,7 @@ Cloudflare Access: detected automatically; login uses the cloudflared CLI,
 Examples:
   cb login codebeam.acme.dev
   cb search "func NewServer" --lang go
+  cb search "TODO" --exclude-repo local/vendor --exclude-lang Markdown --facets
   cb ast 'if $ERR != nil { $$$ }' --lang go --repo local/myrepo
   cb read local/myrepo:internal/web/api.go:100-160
   CODEBEAM_TOKEN=cbp_... cb search "retry backoff" -n 5
@@ -242,6 +243,19 @@ func (a *app) printTool(server, tool string, args map[string]any) error {
 	return nil
 }
 
+// stringListFlag is a repeatable string flag (`--repo a --repo b`).
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+func (f *stringListFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value cannot be empty")
+	}
+	*f = append(*f, value)
+	return nil
+}
+
 // toolArgs drops unset values so the wire payload only carries what the user
 // actually asked for.
 func toolArgs(pairs map[string]any) map[string]any {
@@ -256,6 +270,20 @@ func toolArgs(pairs map[string]any) map[string]any {
 			if v > 0 {
 				out[key] = v
 			}
+		case bool:
+			if v {
+				out[key] = true
+			}
+		case []string:
+			values := make([]string, 0, len(v))
+			for _, item := range v {
+				if item = strings.TrimSpace(item); item != "" {
+					values = append(values, item)
+				}
+			}
+			if len(values) > 0 {
+				out[key] = values
+			}
 		}
 	}
 	return out
@@ -266,9 +294,33 @@ func toolArgs(pairs map[string]any) map[string]any {
 func (a *app) cmdSearch(args []string) error {
 	flags := a.flagSet("search", `cb search [flags] <query>`)
 	server := flags.String("server", "", "Codebeam server URL")
-	repo := flags.String("repo", "", "restrict to one repository full name (e.g. local/myrepo)")
+	var repos, excludeRepos stringListFlag
+	var excludeBranches, excludeTopPaths, excludeExtensions stringListFlag
+	var excludeLangs, excludeSources, excludeProviders stringListFlag
+	var excludeDirty, excludeSymbolKinds, excludeFreshness stringListFlag
+	flags.Var(&repos, "repo", "include a repository full name (repeatable; OR)")
+	flags.Var(&excludeRepos, "exclude-repo", "exclude a repository full name (repeatable)")
 	path := flags.String("path", "", "restrict to file paths matching this regex")
+	branch := flags.String("branch", "", "restrict to an indexed branch")
+	topPath := flags.String("top-path", "", "restrict to a top-level path facet")
+	extension := flags.String("ext", "", "restrict to a file extension (e.g. .go)")
 	lang := flags.String("lang", "", "restrict to a language (e.g. go, python)")
+	source := flags.String("source", "", "restrict to a source host (e.g. github.com, local)")
+	provider := flags.String("provider", "", "restrict to a provider (github, gitlab, local)")
+	dirty := flags.String("dirty", "", "restrict working-tree state: dirty or clean")
+	symbolKind := flags.String("symbol-kind", "", "restrict to a symbol-kind facet")
+	freshness := flags.String("freshness", "", "restrict freshness: hour, day, week, month, older, unknown")
+	sortBy := flags.String("sort", "", "sort: relevance, repo, path, indexed_desc, indexed_asc, match_count")
+	flags.Var(&excludeBranches, "exclude-branch", "exclude a branch facet (repeatable)")
+	flags.Var(&excludeTopPaths, "exclude-top-path", "exclude a top-level path (repeatable)")
+	flags.Var(&excludeExtensions, "exclude-ext", "exclude a file extension (repeatable)")
+	flags.Var(&excludeLangs, "exclude-lang", "exclude a language (repeatable)")
+	flags.Var(&excludeSources, "exclude-source", "exclude a source host (repeatable)")
+	flags.Var(&excludeProviders, "exclude-provider", "exclude a provider (repeatable)")
+	flags.Var(&excludeDirty, "exclude-dirty", "exclude working-tree state dirty/clean (repeatable)")
+	flags.Var(&excludeSymbolKinds, "exclude-symbol-kind", "exclude a symbol kind (repeatable)")
+	flags.Var(&excludeFreshness, "exclude-freshness", "exclude a freshness bucket (repeatable)")
+	facets := flags.Bool("facets", false, "show facet counts for refining the search")
 	maxFiles := flags.Int("n", 0, "maximum files to return (server default 20)")
 	pos, err := parseArgs(flags, args)
 	if err != nil {
@@ -279,7 +331,15 @@ func (a *app) cmdSearch(args []string) error {
 		return a.badUsage(flags, "query is required")
 	}
 	return a.printTool(*server, "search_code", toolArgs(map[string]any{
-		"query": query, "repo": *repo, "path": *path, "lang": *lang, "max_results": *maxFiles,
+		"query": query, "repos": []string(repos), "path": *path, "branch": *branch,
+		"top_path": *topPath, "extension": *extension, "lang": *lang, "source": *source,
+		"provider": *provider, "dirty": *dirty, "symbol_kind": *symbolKind, "freshness": *freshness,
+		"sort": *sortBy, "facets": *facets, "max_results": *maxFiles,
+		"exclude_repos": []string(excludeRepos), "exclude_branches": []string(excludeBranches),
+		"exclude_top_paths": []string(excludeTopPaths), "exclude_extensions": []string(excludeExtensions),
+		"exclude_langs": []string(excludeLangs), "exclude_sources": []string(excludeSources),
+		"exclude_providers": []string(excludeProviders), "exclude_dirty": []string(excludeDirty),
+		"exclude_symbol_kinds": []string(excludeSymbolKinds), "exclude_freshness": []string(excludeFreshness),
 	}))
 }
 
@@ -287,9 +347,26 @@ func (a *app) cmdAST(args []string) error {
 	flags := a.flagSet("ast", `cb ast [flags] --lang <lang> '<pattern>'`)
 	server := flags.String("server", "", "Codebeam server URL")
 	lang := flags.String("lang", "", "language to parse pattern and files as (required)")
-	repo := flags.String("repo", "", "restrict to one repository full name")
+	var repos, excludeRepos, excludeBranches, excludeTopPaths, excludeExtensions stringListFlag
+	var excludeSources, excludeProviders, excludeDirty, excludeFreshness stringListFlag
+	flags.Var(&repos, "repo", "include a repository full name (repeatable; OR)")
+	flags.Var(&excludeRepos, "exclude-repo", "exclude a repository full name (repeatable)")
 	branch := flags.String("branch", "", "search a specific branch's committed state")
 	path := flags.String("path", "", "restrict to file paths matching this regex")
+	topPath := flags.String("top-path", "", "restrict to a top-level path facet")
+	extension := flags.String("ext", "", "restrict to a file extension")
+	source := flags.String("source", "", "restrict to a source host")
+	provider := flags.String("provider", "", "restrict to a provider")
+	dirty := flags.String("dirty", "", "restrict working-tree state: dirty or clean")
+	freshness := flags.String("freshness", "", "restrict to a freshness bucket")
+	flags.Var(&excludeBranches, "exclude-branch", "exclude a branch facet (repeatable)")
+	flags.Var(&excludeTopPaths, "exclude-top-path", "exclude a top-level path (repeatable)")
+	flags.Var(&excludeExtensions, "exclude-ext", "exclude a file extension (repeatable)")
+	flags.Var(&excludeSources, "exclude-source", "exclude a source host (repeatable)")
+	flags.Var(&excludeProviders, "exclude-provider", "exclude a provider (repeatable)")
+	flags.Var(&excludeDirty, "exclude-dirty", "exclude working-tree state dirty/clean (repeatable)")
+	flags.Var(&excludeFreshness, "exclude-freshness", "exclude a freshness bucket (repeatable)")
+	facets := flags.Bool("facets", false, "show facet counts for refining the search")
 	maxFiles := flags.Int("n", 0, "maximum files to return (server default 20)")
 	pos, err := parseArgs(flags, args)
 	if err != nil {
@@ -300,15 +377,25 @@ func (a *app) cmdAST(args []string) error {
 		return a.badUsage(flags, "pattern is required (e.g. 'if $ERR != nil { $$$ }')")
 	}
 	return a.printTool(*server, "structural_search", toolArgs(map[string]any{
-		"pattern": pattern, "lang": *lang, "repo": *repo, "branch": *branch, "path": *path, "max_results": *maxFiles,
+		"pattern": pattern, "lang": *lang, "repos": []string(repos), "branch": *branch, "path": *path,
+		"top_path": *topPath, "extension": *extension, "source": *source, "provider": *provider,
+		"dirty": *dirty, "freshness": *freshness, "facets": *facets, "max_results": *maxFiles,
+		"exclude_repos": []string(excludeRepos), "exclude_branches": []string(excludeBranches),
+		"exclude_top_paths": []string(excludeTopPaths), "exclude_extensions": []string(excludeExtensions),
+		"exclude_sources": []string(excludeSources), "exclude_providers": []string(excludeProviders),
+		"exclude_dirty": []string(excludeDirty), "exclude_freshness": []string(excludeFreshness),
 	}))
 }
 
 func (a *app) cmdDef(args []string) error {
 	flags := a.flagSet("def", `cb def [flags] <symbol>`)
 	server := flags.String("server", "", "Codebeam server URL")
-	repo := flags.String("repo", "", "restrict to one repository full name")
+	var repos, excludeRepos, excludeLangs stringListFlag
+	flags.Var(&repos, "repo", "include a repository full name (repeatable; OR)")
+	flags.Var(&excludeRepos, "exclude-repo", "exclude a repository full name (repeatable)")
+	flags.Var(&excludeLangs, "exclude-lang", "exclude a language (repeatable)")
 	lang := flags.String("lang", "", "restrict to a language")
+	facets := flags.Bool("facets", false, "show facet counts for refining the search")
 	maxFiles := flags.Int("n", 0, "maximum files to return (server default 20)")
 	pos, err := parseArgs(flags, args)
 	if err != nil {
@@ -318,15 +405,20 @@ func (a *app) cmdDef(args []string) error {
 		return a.badUsage(flags, "exactly one symbol is required")
 	}
 	return a.printTool(*server, "symbol_search", toolArgs(map[string]any{
-		"symbol": pos[0], "repo": *repo, "lang": *lang, "max_results": *maxFiles,
+		"symbol": pos[0], "repos": []string(repos), "exclude_repos": []string(excludeRepos),
+		"lang": *lang, "exclude_langs": []string(excludeLangs), "facets": *facets, "max_results": *maxFiles,
 	}))
 }
 
 func (a *app) cmdRefs(args []string) error {
 	flags := a.flagSet("refs", `cb refs [flags] <symbol>`)
 	server := flags.String("server", "", "Codebeam server URL")
-	repo := flags.String("repo", "", "restrict to one repository full name")
+	var repos, excludeRepos, excludeLangs stringListFlag
+	flags.Var(&repos, "repo", "include a repository full name (repeatable; OR)")
+	flags.Var(&excludeRepos, "exclude-repo", "exclude a repository full name (repeatable)")
+	flags.Var(&excludeLangs, "exclude-lang", "exclude a language (repeatable)")
 	lang := flags.String("lang", "", "restrict to a language")
+	facets := flags.Bool("facets", false, "show facet counts for refining the search")
 	maxFiles := flags.Int("n", 0, "maximum files to return (server default 20)")
 	pos, err := parseArgs(flags, args)
 	if err != nil {
@@ -336,7 +428,8 @@ func (a *app) cmdRefs(args []string) error {
 		return a.badUsage(flags, "exactly one symbol is required")
 	}
 	return a.printTool(*server, "find_references", toolArgs(map[string]any{
-		"symbol": pos[0], "repo": *repo, "lang": *lang, "max_results": *maxFiles,
+		"symbol": pos[0], "repos": []string(repos), "exclude_repos": []string(excludeRepos),
+		"lang": *lang, "exclude_langs": []string(excludeLangs), "facets": *facets, "max_results": *maxFiles,
 	}))
 }
 

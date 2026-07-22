@@ -108,6 +108,23 @@ func commitComesFromShard(version string) bool {
 	return version != "" && version != "WORKTREE"
 }
 
+// FacetFilters is a set of values to exclude from a search. Values within one
+// facet are ORed (exclude any matching value); different facets are ANDed.
+// Keeping this typed and shared lets lexical, structural, web, API, CLI, and MCP
+// searches use exactly the same exclusion semantics.
+type FacetFilters struct {
+	Sources     []string
+	Repos       []string
+	Branches    []string
+	Languages   []string
+	TopPaths    []string
+	Extensions  []string
+	Providers   []string
+	Dirty       []string
+	SymbolKinds []string
+	Freshness   []string
+}
+
 type Request struct {
 	Query            string
 	RepoFilter       string
@@ -122,7 +139,10 @@ type Request struct {
 	DirtyFilter      string
 	SymbolKindFilter string
 	FreshnessFilter  string
-	Sort             string
+	// Exclude removes any result matching one of these facet values. Unlike the
+	// single-value positive facets, each exclusion facet accepts multiple values.
+	Exclude FacetFilters
+	Sort    string
 	// Normalized enables user-friendly matching that ignores case and Latin
 	// accents for search atoms. When false, Codebeam keeps Zoekt's default
 	// syntax and case:auto semantics.
@@ -204,10 +224,11 @@ type FacetGroup struct {
 }
 
 type FacetValue struct {
-	Value  string
-	Label  string
-	Count  int
-	Active bool
+	Value    string
+	Label    string
+	Count    int
+	Active   bool
+	Excluded bool
 }
 
 func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
@@ -220,7 +241,11 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	if zoektQuery == "" {
-		return Result{EmptyReason: "No indexed repositories are available for this search."}, nil
+		return Result{
+			Query:       raw,
+			Facets:      buildFacets(nil, req, time.Now()),
+			EmptyReason: "No indexed repositories are available for this search.",
+		}, nil
 	}
 
 	searcher, err := openDirectorySearcher(ctx, e.IndexDir)
@@ -291,6 +316,8 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 	dirtyFilter := normalizeDirtyFilter(req.DirtyFilter)
 	languageFilter := strings.TrimSpace(req.LangFilter)
 	symbolKindFilter := strings.TrimSpace(req.SymbolKindFilter)
+	excluded := NormalizeFacetFilters(req.Exclude)
+	facetNow := time.Now()
 	// collected holds every matched file (up to the budget) and backs facet
 	// counts. We deduplicate identical branch hits, sort this full set first, then
 	// render snippets only for the display window so alternate sort orders do not
@@ -325,9 +352,9 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 			Commit:          indexedCommit(file.Version, repo.IndexedCommit),
 			CommitFromShard: commitComesFromShard(file.Version),
 			Dirty:           dirty,
-			Lines:           lineMatches(file.LineMatches, symbolKindFilter, false),
+			Lines:           lineMatches(file.LineMatches, symbolKindFilter, excluded.SymbolKinds, false),
 		}
-		if len(match.Lines) == 0 {
+		if len(match.Lines) == 0 || fileMatchesExcludedFacet(match, excluded, facetNow) {
 			continue
 		}
 		collected = append(collected, collectedFileMatch{match: match, raw: file})
@@ -340,14 +367,14 @@ func (e Engine) Search(ctx context.Context, req Request) (Result, error) {
 	for i, item := range collected {
 		match := item.match
 		if i < displayFileLimit {
-			match.Lines = lineMatches(item.raw.LineMatches, symbolKindFilter, true)
+			match.Lines = lineMatches(item.raw.LineMatches, symbolKindFilter, excluded.SymbolKinds, true)
 		}
 		faceted = append(faceted, match)
 	}
-	if dirtyFilter != "" || languageFilter == unknownValue || symbolKindFilter != "" || rawCollectedCount != len(faceted) {
+	if dirtyFilter != "" || languageFilter == unknownValue || symbolKindFilter != "" || exclusionsNeedPostFilter(excluded) || rawCollectedCount != len(faceted) {
 		result.FileCount, result.MatchCount = displayedCounts(faceted)
 	}
-	result.Facets = buildFacets(faceted, req, time.Now())
+	result.Facets = buildFacets(faceted, req, facetNow)
 	result.FacetedFileCount = len(faceted)
 	result.FacetsTruncated = result.FileCount > len(faceted)
 	if len(faceted) > displayFileLimit {
@@ -410,6 +437,27 @@ func BuildZoektQuery(req Request) (string, error) {
 	if lang := strings.TrimSpace(req.LangFilter); lang != "" && lang != unknownValue {
 		terms = append(terms, fieldTerm("lang", lang))
 	}
+
+	// Apply exclusions inside Zoekt whenever the facet maps to a native field.
+	// Result-side checks below remain as a correctness backstop and cover values
+	// Zoekt cannot express, such as an unknown language or working-tree state.
+	excluded := NormalizeFacetFilters(req.Exclude)
+	for _, branch := range excluded.Branches {
+		terms = append(terms, negatedFieldTerm("branch", branch))
+	}
+	for _, top := range excluded.TopPaths {
+		if pattern := topPathPattern(top); pattern != "" {
+			terms = append(terms, negatedFieldTerm("file", pattern))
+		}
+	}
+	for _, ext := range excluded.Extensions {
+		terms = append(terms, negatedFieldTerm("file", extensionPattern(ext)))
+	}
+	for _, lang := range excluded.Languages {
+		if lang != unknownValue {
+			terms = append(terms, negatedFieldTerm("lang", lang))
+		}
+	}
 	if req.Normalized {
 		// Normalized search should make uppercase input match lowercase code.
 		// Users can still scope exact matching inside their query with case:yes,
@@ -458,6 +506,27 @@ func selectedReposForQuery(req Request) ([]store.Repo, error) {
 			return value == freshness
 		})
 	}
+
+	excluded := NormalizeFacetFilters(req.Exclude)
+	if len(excluded.Repos) > 0 {
+		allowed = filterRepos(allowed, func(repo store.Repo) bool { return !containsString(excluded.Repos, repo.FullName) })
+	}
+	if len(excluded.Sources) > 0 {
+		allowed = filterRepos(allowed, func(repo store.Repo) bool {
+			value, _ := repoSourceFacetValue(repo.FullName, repo.HostProvider)
+			return !containsString(excluded.Sources, value)
+		})
+	}
+	if len(excluded.Providers) > 0 {
+		allowed = filterRepos(allowed, func(repo store.Repo) bool { return !containsString(excluded.Providers, repo.HostProvider) })
+	}
+	if len(excluded.Freshness) > 0 {
+		now := time.Now()
+		allowed = filterRepos(allowed, func(repo store.Repo) bool {
+			value, _ := freshnessFacetValue(repo.IndexedAt, now)
+			return !containsString(excluded.Freshness, value)
+		})
+	}
 	return allowed, nil
 }
 
@@ -503,6 +572,10 @@ func fieldTerm(field, value string) string {
 	return field + ":" + value
 }
 
+func negatedFieldTerm(field, value string) string {
+	return "-" + fieldTerm(field, value)
+}
+
 func topPathPattern(value string) string {
 	if value == topPathRootValue {
 		return "^[^/]+$"
@@ -521,11 +594,14 @@ func extensionPattern(value string) string {
 	return regexp.QuoteMeta(normalizeExtFilter(value)) + "$"
 }
 
-func lineMatches(lines []zoekt.LineMatch, symbolKindFilter string, withSnippets bool) []LineMatch {
+func lineMatches(lines []zoekt.LineMatch, symbolKindFilter string, excludedSymbolKinds []string, withSnippets bool) []LineMatch {
 	out := make([]LineMatch, 0, len(lines))
 	for _, line := range lines {
 		kinds := symbolKinds(line.LineFragments)
 		if symbolKindFilter != "" && !containsString(kinds, symbolKindFilter) {
+			continue
+		}
+		if intersectsFold(kinds, excludedSymbolKinds) {
 			continue
 		}
 		lineMatch := LineMatch{
@@ -880,6 +956,77 @@ func MatchExtension(relPath, filter string) bool {
 	return value == filter
 }
 
+// NormalizeFacetFilters trims, canonicalizes, and deduplicates exclusion
+// values. It is exported so non-Zoekt engines can apply the same semantics.
+func NormalizeFacetFilters(in FacetFilters) FacetFilters {
+	return FacetFilters{
+		Sources:     normalizeFacetValues(in.Sources, normalizeSourceFilter),
+		Repos:       normalizeFacetValues(in.Repos, strings.TrimSpace),
+		Branches:    normalizeFacetValues(in.Branches, strings.TrimSpace),
+		Languages:   normalizeFacetValues(in.Languages, strings.TrimSpace),
+		TopPaths:    normalizeFacetValues(in.TopPaths, strings.TrimSpace),
+		Extensions:  normalizeFacetValues(in.Extensions, normalizeExtFilter),
+		Providers:   normalizeFacetValues(in.Providers, strings.TrimSpace),
+		Dirty:       normalizeFacetValues(in.Dirty, normalizeDirtyFilter),
+		SymbolKinds: normalizeFacetValues(in.SymbolKinds, strings.TrimSpace),
+		Freshness:   normalizeFacetValues(in.Freshness, normalizeFreshnessFilter),
+	}
+}
+
+func normalizeFacetValues(values []string, normalize func(string) string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = normalize(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func exclusionsNeedPostFilter(excluded FacetFilters) bool {
+	return len(excluded.Dirty) > 0 || len(excluded.SymbolKinds) > 0 || containsString(excluded.Languages, unknownValue)
+}
+
+func fileMatchesExcludedFacet(file FileMatch, excluded FacetFilters, now time.Time) bool {
+	if containsString(excluded.Repos, file.Repository) {
+		return true
+	}
+	source, _ := repoSourceFacetValue(file.Repository, file.Provider)
+	if containsString(excluded.Sources, source) || containsString(excluded.Providers, file.Provider) {
+		return true
+	}
+	if intersectsString(file.Branches, excluded.Branches) || containsFold(excluded.Languages, file.Language) ||
+		(strings.TrimSpace(file.Language) == "" && containsString(excluded.Languages, unknownValue)) {
+		return true
+	}
+	for _, value := range excluded.TopPaths {
+		if MatchTopPath(file.Path, value) {
+			return true
+		}
+	}
+	for _, value := range excluded.Extensions {
+		if MatchExtension(file.Path, value) {
+			return true
+		}
+	}
+	dirty := cleanValue
+	if file.Dirty {
+		dirty = dirtyValue
+	}
+	if containsString(excluded.Dirty, dirty) {
+		return true
+	}
+	freshness, _ := freshnessFacetValue(file.IndexedAt, now)
+	return containsString(excluded.Freshness, freshness)
+}
+
 func buildFacets(files []FileMatch, req Request, now time.Time) []FacetGroup {
 	type bucket struct {
 		counts map[string]int
@@ -955,10 +1102,23 @@ func buildFacets(files []FileMatch, req Request, now time.Time) []FacetGroup {
 		"symbol_kind": {strings.TrimSpace(req.SymbolKindFilter)},
 		"freshness":   {normalizeFreshnessFilter(req.FreshnessFilter)},
 	}
+	exclude := NormalizeFacetFilters(req.Exclude)
+	excluded := map[string][]string{
+		"source":      exclude.Sources,
+		"repo":        exclude.Repos,
+		"branch":      exclude.Branches,
+		"language":    exclude.Languages,
+		"top_path":    exclude.TopPaths,
+		"extension":   exclude.Extensions,
+		"provider":    exclude.Providers,
+		"dirty":       exclude.Dirty,
+		"symbol_kind": exclude.SymbolKinds,
+		"freshness":   exclude.Freshness,
+	}
 
 	groups := make([]FacetGroup, 0, 10)
 	appendGroup := func(field, label string, b bucket, fixedOrder []string) {
-		group, ok := makeFacetGroup(field, label, b.counts, b.labels, selected[field], fixedOrder)
+		group, ok := makeFacetGroup(field, label, b.counts, b.labels, selected[field], excluded[field], fixedOrder)
 		if ok {
 			groups = append(groups, group)
 		}
@@ -976,20 +1136,27 @@ func buildFacets(files []FileMatch, req Request, now time.Time) []FacetGroup {
 	return groups
 }
 
-func makeFacetGroup(field, label string, counts map[string]int, labels map[string]string, selected []string, fixedOrder []string) (FacetGroup, bool) {
+func makeFacetGroup(field, label string, counts map[string]int, labels map[string]string, selected, excluded []string, fixedOrder []string) (FacetGroup, bool) {
 	selectedSet := map[string]struct{}{}
-	for _, value := range selected {
+	excludedSet := map[string]struct{}{}
+	ensureValue := func(value string, set map[string]struct{}) {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			continue
+			return
 		}
-		selectedSet[value] = struct{}{}
+		set[value] = struct{}{}
 		if _, ok := counts[value]; !ok {
 			counts[value] = 0
 		}
 		if labels[value] == "" {
 			labels[value] = defaultFacetLabel(field, value)
 		}
+	}
+	for _, value := range selected {
+		ensureValue(value, selectedSet)
+	}
+	for _, value := range excluded {
+		ensureValue(value, excludedSet)
 	}
 	if len(counts) == 0 {
 		return FacetGroup{}, false
@@ -1005,8 +1172,12 @@ func makeFacetGroup(field, label string, counts map[string]int, labels map[strin
 		if facetLabel == "" {
 			facetLabel = defaultFacetLabel(field, value)
 		}
+		_, excluded := excludedSet[value]
 		_, active := selectedSet[value]
-		values = append(values, FacetValue{Value: value, Label: facetLabel, Count: count, Active: active})
+		// A direct API caller can submit contradictory include and exclude
+		// values. Exclusion wins, matching the actual result set.
+		active = active && !excluded
+		values = append(values, FacetValue{Value: value, Label: facetLabel, Count: count, Active: active, Excluded: excluded})
 	}
 	seen := map[string]struct{}{}
 	for _, value := range fixedOrder {
@@ -1032,8 +1203,17 @@ func makeFacetGroup(field, label string, counts map[string]int, labels map[strin
 	}
 	if len(fixedOrder) == 0 {
 		sort.SliceStable(values, func(i, j int) bool {
-			if values[i].Active != values[j].Active {
-				return values[i].Active
+			state := func(v FacetValue) int {
+				if v.Active {
+					return 0
+				}
+				if v.Excluded {
+					return 1
+				}
+				return 2
+			}
+			if left, right := state(values[i]), state(values[j]); left != right {
+				return left < right
 			}
 			if values[i].Count != values[j].Count {
 				return values[i].Count > values[j].Count
@@ -1143,6 +1323,8 @@ func defaultFacetLabel(field, value string) string {
 	switch field {
 	case "source":
 		return sourceFacetLabel(value)
+	case "repo":
+		return repoFacetLabel(value, "")
 	case "top_path":
 		if value == topPathRootValue {
 			return "Repository root"
@@ -1295,6 +1477,33 @@ func normalizeFreshnessFilter(value string) string {
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func intersectsString(left, right []string) bool {
+	for _, value := range left {
+		if containsString(right, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func intersectsFold(left, right []string) bool {
+	for _, value := range left {
+		if containsFold(right, value) {
 			return true
 		}
 	}

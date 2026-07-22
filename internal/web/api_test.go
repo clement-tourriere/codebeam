@@ -54,6 +54,40 @@ func TestAPISearchReturnsJSONMatches(t *testing.T) {
 	}
 }
 
+func TestAPISearchExcludesFacetValues(t *testing.T) {
+	ctx := context.Background()
+	srv, user, repo := newTestAPIServer(t, ctx)
+	if err := srv.indexer.Reindex(ctx, repo.ID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=UniqueNeedle&exclude_lang=Go", nil)
+	addSessionCookie(t, srv, req, user.ID)
+	rr := httptest.NewRecorder()
+	srv.route(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var body apiSearchResponse
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Stats.MatchCount != 0 || len(body.Files) != 0 {
+		t.Fatalf("excluded Go results were returned: %#v", body)
+	}
+	var excluded bool
+	for _, group := range body.Facets {
+		if group.Field == "language" {
+			for _, value := range group.Values {
+				excluded = excluded || (value.Value == "Go" && value.Excluded)
+			}
+		}
+	}
+	if !excluded {
+		t.Fatalf("API facets did not report the active exclusion: %#v", body.Facets)
+	}
+}
+
 func TestAPIReadReturnsRequestedRange(t *testing.T) {
 	ctx := context.Background()
 	srv, user, repo := newTestAPIServer(t, ctx)

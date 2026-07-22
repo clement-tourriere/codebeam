@@ -79,6 +79,26 @@ func TestStructuralSearchToolRequiresLang(t *testing.T) {
 	}
 }
 
+func TestSearchToolSchemaExposesFacetsAndExclusions(t *testing.T) {
+	var searchTool map[string]any
+	for _, tool := range toolDefinitions() {
+		if tool["name"] == "search_code" {
+			searchTool = tool
+			break
+		}
+	}
+	if searchTool == nil {
+		t.Fatal("search_code tool definition missing")
+	}
+	schema := searchTool["inputSchema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	for _, want := range []string{"repos", "exclude_repos", "exclude_langs", "exclude_top_paths", "facets"} {
+		if _, ok := properties[want]; !ok {
+			t.Errorf("search_code schema missing %q", want)
+		}
+	}
+}
+
 func TestSearchCodeToolReturnsCitations(t *testing.T) {
 	ctx := context.Background()
 	srv, _ := newTestServer(t, ctx)
@@ -91,6 +111,34 @@ func TestSearchCodeToolReturnsCitations(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("search result missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestSearchCodeToolCanReturnFacets(t *testing.T) {
+	ctx := context.Background()
+	srv, _ := newTestServer(t, ctx)
+
+	responses := runSession(t, srv, ctx,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_code","arguments":{"query":"UniqueNeedle","facets":true}}}`,
+	)
+	text := toolText(t, responses[0])
+	for _, want := range []string{"## Facets", "Repository:", "Language:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("faceted search result missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestSearchCodeToolExcludesRepositories(t *testing.T) {
+	ctx := context.Background()
+	srv, _ := newTestServer(t, ctx)
+
+	responses := runSession(t, srv, ctx,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_code","arguments":{"query":"UniqueNeedle","exclude_repos":["local/repo"]}}}`,
+	)
+	text := toolText(t, responses[0])
+	if strings.Contains(text, "local/repo:main.go") || !strings.Contains(text, "No indexed repositories") {
+		t.Fatalf("repository exclusion was not applied:\n%s", text)
 	}
 }
 

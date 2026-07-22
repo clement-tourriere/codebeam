@@ -179,6 +179,9 @@ type SearchParams struct {
 	Dirty      string
 	SymbolKind string
 	Freshness  string
+	// Exclude contains repeatable negative facet values (exclude_repo,
+	// exclude_lang, …) shared by the HTML UI and JSON API.
+	Exclude    codesearch.FacetFilters
 	Sort       string
 	Normalized bool
 	Symbols    bool
@@ -257,6 +260,7 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		"repoReferencesURL":       repoReferencesURL,
 		"sourceManageURL":         sourceManageURL,
 		"facetURL":                facetURL,
+		"facetExcludeURL":         facetExcludeURL,
 		"clearSearchFiltersURL":   clearSearchFiltersURL,
 		"activeSearchFilterCount": activeSearchFilterCount,
 		"activeSearchFilters":     activeSearchFilters,
@@ -2193,6 +2197,7 @@ func (s *Server) repoSearchPageData(ctx context.Context, user *store.User, repo 
 	params := searchParamsFromQuery(r.URL.Query())
 	params.Repo = repo.FullName
 	params.Repos = []string{repo.FullName}
+	params.Exclude.Repos = nil
 	return s.searchPageDataForParams(ctx, user, params, fmt.Sprintf("/repo/%d", repo.ID))
 }
 
@@ -2219,6 +2224,7 @@ func (s *Server) searchPageDataForParams(ctx context.Context, user *store.User, 
 			ProviderFilter:  params.Provider,
 			FreshnessFilter: params.Freshness,
 			DirtyFilter:     params.Dirty,
+			Exclude:         params.Exclude,
 			Allowed:         repos,
 		})
 		if err != nil {
@@ -2242,6 +2248,7 @@ func (s *Server) searchPageDataForParams(ctx context.Context, user *store.User, 
 		DirtyFilter:      params.Dirty,
 		SymbolKindFilter: params.SymbolKind,
 		FreshnessFilter:  params.Freshness,
+		Exclude:          params.Exclude,
 		Sort:             params.Sort,
 		Normalized:       params.Normalized,
 		Symbols:          params.Symbols,
@@ -2257,6 +2264,18 @@ func (s *Server) searchPageDataForParams(ctx context.Context, user *store.User, 
 
 func searchParamsFromQuery(values url.Values) SearchParams {
 	repos := normalizeRepoParams(values["repo"])
+	exclude := codesearch.NormalizeFacetFilters(codesearch.FacetFilters{
+		Sources:     values["exclude_source"],
+		Repos:       values["exclude_repo"],
+		Branches:    values["exclude_branch"],
+		Languages:   values["exclude_lang"],
+		TopPaths:    values["exclude_top"],
+		Extensions:  values["exclude_ext"],
+		Providers:   values["exclude_provider"],
+		Dirty:       values["exclude_dirty"],
+		SymbolKinds: values["exclude_symbol_kind"],
+		Freshness:   values["exclude_freshness"],
+	})
 	return SearchParams{
 		Query:      values.Get("q"),
 		Mode:       normalizeModeParam(values.Get("mode")),
@@ -2272,6 +2291,7 @@ func searchParamsFromQuery(values url.Values) SearchParams {
 		Dirty:      normalizeDirtyParam(values.Get("dirty")),
 		SymbolKind: values.Get("symbol_kind"),
 		Freshness:  normalizeFreshnessParam(values.Get("freshness")),
+		Exclude:    exclude,
 		Sort:       normalizeSortParam(values.Get("sort")),
 		Normalized: isTrueParam(values.Get("norm")) || isTrueParam(values.Get("normalized")),
 		Symbols:    isTrueParam(values.Get("sym")),
@@ -2308,6 +2328,16 @@ func firstString(values []string) string {
 		return ""
 	}
 	return values[0]
+}
+
+func removeString(values []string, value string) []string {
+	out := make([]string, 0, len(values))
+	for _, existing := range values {
+		if existing != value {
+			out = append(out, existing)
+		}
+	}
+	return out
 }
 
 func toggleString(values []string, value string) []string {
@@ -2813,6 +2843,9 @@ func searchValues(params SearchParams) url.Values {
 	for _, repo := range repoFiltersFromParams(params) {
 		values.Add("repo", repo)
 	}
+	for _, value := range params.Exclude.Repos {
+		values.Add("exclude_repo", value)
+	}
 	if params.Branch != "" {
 		values.Set("branch", params.Branch)
 	}
@@ -2842,6 +2875,24 @@ func searchValues(params SearchParams) url.Values {
 	}
 	if params.Freshness != "" {
 		values.Set("freshness", params.Freshness)
+	}
+	for _, item := range []struct {
+		key    string
+		values []string
+	}{
+		{"exclude_source", params.Exclude.Sources},
+		{"exclude_branch", params.Exclude.Branches},
+		{"exclude_lang", params.Exclude.Languages},
+		{"exclude_top", params.Exclude.TopPaths},
+		{"exclude_ext", params.Exclude.Extensions},
+		{"exclude_provider", params.Exclude.Providers},
+		{"exclude_dirty", params.Exclude.Dirty},
+		{"exclude_symbol_kind", params.Exclude.SymbolKinds},
+		{"exclude_freshness", params.Exclude.Freshness},
+	} {
+		for _, value := range item.values {
+			values.Add(item.key, value)
+		}
 	}
 	if params.Sort != "" && params.Sort != "relevance" {
 		values.Set("sort", params.Sort)
@@ -2893,8 +2944,12 @@ func searchSortDescription(sort string) string {
 	}
 }
 
+// facetURL toggles a positive facet value. Choosing a currently excluded value
+// moves it to the include state in one click, keeping the UI tri-state rather
+// than allowing contradictory filters.
 func facetURL(base string, params SearchParams, field, value string) template.URL {
 	updated := params
+	setExcludedFacetValues(&updated, field, removeString(excludedFacetValues(params, field), value))
 	if field == "repo" {
 		updated.Repos = toggleString(repoFiltersFromParams(params), value)
 		updated.Repo = firstString(updated.Repos)
@@ -2905,6 +2960,21 @@ func facetURL(base string, params SearchParams, field, value string) template.UR
 	} else {
 		setFacetValue(&updated, field, value)
 	}
+	return template.URL(searchURL(base, updated)) // #nosec G203 -- base is generated internally; query values are URL-encoded
+}
+
+// facetExcludeURL toggles one negative facet value. Exclusions accumulate, so a
+// user can hide several repositories/languages/etc. without constructing a
+// query by hand.
+func facetExcludeURL(base string, params SearchParams, field, value string) template.URL {
+	updated := params
+	if field == "repo" {
+		updated.Repos = removeString(repoFiltersFromParams(params), value)
+		updated.Repo = firstString(updated.Repos)
+	} else if activeFacetValue(params, field) == value {
+		setFacetValue(&updated, field, "")
+	}
+	setExcludedFacetValues(&updated, field, toggleString(excludedFacetValues(params, field), value))
 	return template.URL(searchURL(base, updated)) // #nosec G203 -- base is generated internally; query values are URL-encoded
 }
 
@@ -2925,6 +2995,7 @@ func clearSearchFiltersURL(base string, params SearchParams) template.URL {
 	params.Dirty = ""
 	params.SymbolKind = ""
 	params.Freshness = ""
+	params.Exclude = codesearch.FacetFilters{}
 	return template.URL(searchURL(base, params)) // #nosec G203 -- base is generated internally; query values are URL-encoded
 }
 
@@ -2932,6 +3003,7 @@ func clearSearchFiltersURL(base string, params SearchParams) template.URL {
 type SearchFilterChip struct {
 	Field     string
 	Value     string
+	Excluded  bool
 	RemoveURL template.URL
 }
 
@@ -2940,12 +3012,12 @@ type SearchFilterChip struct {
 // filters (branch, language, …) visible and individually clearable instead of
 // riding along as hidden form inputs.
 func activeSearchFilters(base string, params SearchParams) []SearchFilterChip {
-	chips := make([]SearchFilterChip, 0, 8)
+	chips := make([]SearchFilterChip, 0, 12)
 	if !strings.HasPrefix(base, "/repo/") {
 		for _, repo := range repoFiltersFromParams(params) {
 			chips = append(chips, SearchFilterChip{
 				Field:     "repo",
-				Value:     repo,
+				Value:     codesearch.FacetValueLabel("repo", repo),
 				RemoveURL: facetURL(base, params, "repo", repo),
 			})
 		}
@@ -2987,6 +3059,35 @@ func activeSearchFilters(base string, params SearchParams) []SearchFilterChip {
 			RemoveURL: template.URL(searchURL(base, updated)), // #nosec G203 -- base is generated internally; query values are URL-encoded
 		})
 	}
+
+	excludedFields := []struct {
+		field, label string
+		values       []string
+	}{
+		{"repo", "repo", params.Exclude.Repos},
+		{"branch", "branch", params.Exclude.Branches},
+		{"top_path", "folder", params.Exclude.TopPaths},
+		{"extension", "extension", params.Exclude.Extensions},
+		{"language", "language", params.Exclude.Languages},
+		{"source", "source", params.Exclude.Sources},
+		{"provider", "provider", params.Exclude.Providers},
+		{"dirty", "working tree", params.Exclude.Dirty},
+		{"symbol_kind", "symbol", params.Exclude.SymbolKinds},
+		{"freshness", "freshness", params.Exclude.Freshness},
+	}
+	for _, item := range excludedFields {
+		if item.field == "repo" && strings.HasPrefix(base, "/repo/") {
+			continue
+		}
+		for _, value := range item.values {
+			chips = append(chips, SearchFilterChip{
+				Field:     item.label,
+				Value:     codesearch.FacetValueLabel(item.field, value),
+				Excluded:  true,
+				RemoveURL: facetExcludeURL(base, params, item.field, value),
+			})
+		}
+	}
 	return chips
 }
 
@@ -2997,15 +3098,71 @@ func activeSearchFilterCount(base string, params SearchParams) int {
 		lang = ""
 	}
 	values := []string{params.Branch, params.Path, params.TopPath, params.Ext, lang, params.Source, params.Provider, params.Dirty, params.SymbolKind, params.Freshness}
-	if !strings.HasPrefix(base, "/repo/") && len(repoFiltersFromParams(params)) > 0 {
-		count++
+	if !strings.HasPrefix(base, "/repo/") {
+		count += len(repoFiltersFromParams(params)) + len(params.Exclude.Repos)
 	}
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			count++
 		}
 	}
+	count += len(params.Exclude.Sources) + len(params.Exclude.Branches) + len(params.Exclude.Languages) +
+		len(params.Exclude.TopPaths) + len(params.Exclude.Extensions) + len(params.Exclude.Providers) +
+		len(params.Exclude.Dirty) + len(params.Exclude.SymbolKinds) + len(params.Exclude.Freshness)
 	return count
+}
+
+func excludedFacetValues(params SearchParams, field string) []string {
+	switch field {
+	case "source":
+		return params.Exclude.Sources
+	case "repo":
+		return params.Exclude.Repos
+	case "branch":
+		return params.Exclude.Branches
+	case "language":
+		return params.Exclude.Languages
+	case "top_path":
+		return params.Exclude.TopPaths
+	case "extension":
+		return params.Exclude.Extensions
+	case "provider":
+		return params.Exclude.Providers
+	case "dirty":
+		return params.Exclude.Dirty
+	case "symbol_kind":
+		return params.Exclude.SymbolKinds
+	case "freshness":
+		return params.Exclude.Freshness
+	default:
+		return nil
+	}
+}
+
+func setExcludedFacetValues(params *SearchParams, field string, values []string) {
+	switch field {
+	case "source":
+		params.Exclude.Sources = values
+	case "repo":
+		params.Exclude.Repos = values
+	case "branch":
+		params.Exclude.Branches = values
+	case "language":
+		params.Exclude.Languages = values
+	case "top_path":
+		params.Exclude.TopPaths = values
+	case "extension":
+		params.Exclude.Extensions = values
+	case "provider":
+		params.Exclude.Providers = values
+	case "dirty":
+		params.Exclude.Dirty = values
+	case "symbol_kind":
+		params.Exclude.SymbolKinds = values
+	case "freshness":
+		params.Exclude.Freshness = values
+	}
+	params.Exclude = codesearch.NormalizeFacetFilters(params.Exclude)
 }
 
 func activeFacetValue(params SearchParams, field string) string {

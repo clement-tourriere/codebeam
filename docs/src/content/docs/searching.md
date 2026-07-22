@@ -80,7 +80,11 @@ Two things to know:
 
 ## Filtering and sorting results
 
-The sidebar facets narrow results with one click, and every facet shows live match counts:
+The sidebar facets narrow results with live match counts. Click a value to **include** it, or click the **−** action beside it to **exclude** it. Exclusions accumulate — for example, you can hide several noisy repositories and then exclude Markdown and generated top-level paths. Included values use purple; excluded values and their removable `not …` chips use red.
+
+The repository picker above the results has the same two modes: choose **Include** to search one or more repositories together (OR), or **Exclude** to search everything except the repositories you add.
+
+Available facets:
 
 - **Source** and **Provider** — local vs. GitHub vs. GitLab, etc.
 - **Repository** and **Branch**
@@ -89,7 +93,7 @@ The sidebar facets narrow results with one click, and every facet shows live mat
 - **Symbol kind** — function, method, class… (with Symbols only)
 - **Freshness** — how recently the matching repository was indexed
 
-Sort by relevance (default), repository, path, most/least recently indexed, or match count.
+Sort by relevance (default), repository, path, most/least recently indexed, or match count. Every include/exclude choice is encoded in the URL, survives a new query, and can be removed independently from the chips under the search box.
 
 ## Reading results
 

@@ -78,10 +78,11 @@ type apiFacetGroup struct {
 }
 
 type apiFacetValue struct {
-	Value  string `json:"value"`
-	Label  string `json:"label"`
-	Count  int    `json:"count"`
-	Active bool   `json:"active,omitempty"`
+	Value    string `json:"value"`
+	Label    string `json:"label"`
+	Count    int    `json:"count"`
+	Active   bool   `json:"active,omitempty"`
+	Excluded bool   `json:"excluded,omitempty"`
 }
 
 type apiReadResponse struct {
@@ -137,6 +138,7 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 			ProviderFilter:  params.Provider,
 			FreshnessFilter: params.Freshness,
 			DirtyFilter:     params.Dirty,
+			Exclude:         params.Exclude,
 			Allowed:         repos,
 		})
 		if err != nil {
@@ -173,6 +175,7 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		DirtyFilter:      params.Dirty,
 		SymbolKindFilter: params.SymbolKind,
 		FreshnessFilter:  params.Freshness,
+		Exclude:          params.Exclude,
 		Sort:             params.Sort,
 		Normalized:       params.Normalized,
 		Symbols:          params.Symbols,
@@ -424,7 +427,7 @@ func apiFacetGroups(groups []codesearch.FacetGroup) []apiFacetGroup {
 	for _, group := range groups {
 		values := make([]apiFacetValue, 0, len(group.Values))
 		for _, value := range group.Values {
-			values = append(values, apiFacetValue{Value: value.Value, Label: value.Label, Count: value.Count, Active: value.Active})
+			values = append(values, apiFacetValue{Value: value.Value, Label: value.Label, Count: value.Count, Active: value.Active, Excluded: value.Excluded})
 		}
 		out = append(out, apiFacetGroup{Field: group.Field, Label: group.Label, Values: values})
 	}

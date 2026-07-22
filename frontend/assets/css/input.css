@@ -189,6 +189,78 @@ code {
   min-width: 0;
 }
 
+/* Facet rows are split controls: the value refines positively, while the
+   right-hand action has its own divider and destructive hover treatment. */
+.facet-option {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--radius-field);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.facet-option:hover,
+.facet-option:focus-within {
+  border-color: var(--color-base-300);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--color-base-content) 8%, transparent);
+}
+.facet-option-value {
+  color: inherit;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.facet-option-value:hover {
+  background-color: var(--color-base-200);
+}
+.facet-option-action {
+  display: flex;
+  width: 2.125rem;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  background-color: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 52%, transparent);
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.facet-option-action:hover {
+  border-left-color: color-mix(in oklch, var(--color-error) 32%, transparent);
+  background-color: color-mix(in oklch, var(--color-error) 14%, var(--color-base-100));
+  color: var(--color-error);
+}
+.facet-option-value:focus-visible,
+.facet-option-action:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.facet-option-active {
+  border-color: color-mix(in oklch, var(--color-primary) 24%, transparent);
+  color: var(--color-primary);
+}
+.facet-option-active .facet-option-value {
+  background-color: color-mix(in oklch, var(--color-primary) 10%, var(--color-base-100));
+}
+.facet-option-active .facet-option-value:hover {
+  background-color: color-mix(in oklch, var(--color-primary) 16%, var(--color-base-100));
+}
+.facet-option-excluded {
+  border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+  color: var(--color-error);
+}
+.facet-option-excluded .facet-option-value {
+  background-color: color-mix(in oklch, var(--color-error) 10%, var(--color-base-100));
+}
+.facet-option-excluded .facet-option-value:hover {
+  background-color: color-mix(in oklch, var(--color-error) 16%, var(--color-base-100));
+}
+.facet-option-excluded .facet-option-action {
+  border-left-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+  background-color: color-mix(in oklch, var(--color-error) 14%, var(--color-base-100));
+  color: var(--color-error);
+}
+.facet-option-excluded .facet-option-action:hover {
+  background-color: color-mix(in oklch, var(--color-error) 22%, var(--color-base-100));
+}
+
 /* Active search filter chips: one removable chip per applied filter. */
 .filter-chip {
   display: inline-flex;
@@ -202,6 +274,20 @@ code {
   color: var(--color-base-content);
   font-size: 0.75rem;
   line-height: 1.1;
+}
+.filter-chip-excluded {
+  border-color: color-mix(in oklch, var(--color-error) 45%, transparent);
+  background: color-mix(in oklch, var(--color-error) 10%, var(--color-base-100));
+}
+.filter-chip-excluded .filter-chip-field {
+  color: var(--color-error);
+}
+.filter-chip-exclude-icon {
+  color: var(--color-error);
+  flex-shrink: 0;
+}
+.filter-chip-excluded .filter-chip-remove:hover {
+  background: color-mix(in oklch, var(--color-error) 22%, transparent);
 }
 .filter-chip-field {
   color: color-mix(in oklch, var(--color-base-content) 55%, transparent);

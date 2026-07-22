@@ -88,6 +88,58 @@ func TestBuildZoektQueryFiltersMultipleRepos(t *testing.T) {
 	}
 }
 
+func TestBuildZoektQueryExcludesFacetValues(t *testing.T) {
+	query, err := BuildZoektQuery(Request{
+		Query: "TODO",
+		Exclude: FacetFilters{
+			Repos:      []string{"local/other"},
+			Branches:   []string{"generated"},
+			TopPaths:   []string{"vendor"},
+			Extensions: []string{"md"},
+			Languages:  []string{"Python"},
+		},
+		Allowed: []store.Repo{
+			{FullName: "github.com/acme/api"},
+			{FullName: "local/other"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"repo:^github\\.com/acme/api$",
+		"-branch:generated",
+		"-file:^vendor/",
+		"-file:\\.md$",
+		"-lang:Python",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query %q does not contain exclusion %q", query, want)
+		}
+	}
+	if strings.Contains(query, "local/other") {
+		t.Fatalf("excluded repository leaked into query scope: %q", query)
+	}
+}
+
+func TestSelectedReposAppliesMultipleExclusions(t *testing.T) {
+	now := time.Now().Unix()
+	repos, err := SelectedRepos(Request{
+		Allowed: []store.Repo{
+			{FullName: "github.com/acme/api", HostProvider: "github", IndexedAt: now},
+			{FullName: "github.com/acme/web", HostProvider: "github", IndexedAt: now},
+			{FullName: "local/app", HostProvider: "local", IndexedAt: now},
+		},
+		Exclude: FacetFilters{Repos: []string{"github.com/acme/web"}, Providers: []string{"local"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].FullName != "github.com/acme/api" {
+		t.Fatalf("excluded repo/provider selection = %#v", repos)
+	}
+}
+
 func TestBuildZoektQueryAddsFilters(t *testing.T) {
 	query, err := BuildZoektQuery(Request{
 		Query:         "panic",
@@ -191,6 +243,20 @@ func facetHasField(facets []FacetGroup, field string) bool {
 	return false
 }
 
+func facetValueExcluded(facets []FacetGroup, field, value string) bool {
+	for _, facet := range facets {
+		if facet.Field != field {
+			continue
+		}
+		for _, facetValue := range facet.Values {
+			if facetValue.Value == value {
+				return facetValue.Excluded
+			}
+		}
+	}
+	return false
+}
+
 func facetValueActive(facets []FacetGroup, field, value string) bool {
 	for _, facet := range facets {
 		if facet.Field != field {
@@ -217,6 +283,28 @@ func facetHasLabel(facets []FacetGroup, field, label string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildFacetsKeepsExcludedValuesVisible(t *testing.T) {
+	facets := buildFacets([]FileMatch{{
+		Repository: "github.com/acme/api", Provider: "github", Path: "main.go", Language: "Go",
+		Lines: []LineMatch{{Number: 1}},
+	}}, Request{Exclude: FacetFilters{
+		Repos:      []string{"github.com/acme/web"},
+		Languages:  []string{"Python"},
+		Extensions: []string{".md"},
+	}}, time.Now())
+
+	for field, value := range map[string]string{
+		"repo": "github.com/acme/web", "language": "Python", "extension": ".md",
+	} {
+		if !facetValueExcluded(facets, field, value) {
+			t.Errorf("%s=%q was not retained and marked excluded: %#v", field, value, facets)
+		}
+		if facetValueActive(facets, field, value) {
+			t.Errorf("%s=%q cannot be active and excluded", field, value)
+		}
+	}
 }
 
 func TestSortCollectedFiles(t *testing.T) {

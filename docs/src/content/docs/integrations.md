@@ -29,6 +29,8 @@ The Model Context Protocol server gives agents eight retrieval tools:
 
 Together these replace the grep → read → grep loop with targeted queries — typically a large token saving per question, and answers grounded in code the agent couldn't otherwise see.
 
+All four search-like tools understand facets. Set `facets: true` to receive compact repository/language/path/provider/etc. counts, include several repositories with `repos`, and remove noisy buckets with arrays such as `exclude_repos`, `exclude_langs`, `exclude_top_paths`, or `exclude_extensions`. The same positive and negative facet model is used by the web UI, API, and `cb`.
+
 ### Local agents: stdio
 
 For an agent running on the same machine, use the stdio transport. One command for Claude Code:
@@ -117,8 +119,12 @@ GET /api/search?q=handler&repo=local/codebeam&lang=go
 | `source`, `provider` | Local vs. remote; code-host filter. |
 | `dirty`, `freshness`, `symbol_kind` | Working-tree state, index age bucket, definition kind. |
 | `sort` | Relevance (default), repo, path, index age, or match count. |
+| `exclude_repo` | Repository to exclude; repeat to exclude several. |
+| `exclude_branch`, `exclude_top`, `exclude_ext`, `exclude_lang` | Repeatable negative branch/path/extension/language facets. |
+| `exclude_source`, `exclude_provider` | Repeatable negative source/provider facets. |
+| `exclude_dirty`, `exclude_freshness`, `exclude_symbol_kind` | Repeatable negative working-tree/freshness/symbol facets. |
 
-The response reports which `engine` ran (`zoekt` or `structural`), the compiled `engine_query`, a `truncated` flag when any cap cut the results, facet counts, and the matched files. Each file carries the `commit` it was indexed at (empty for non-git sources) and a `dirty` flag; structural matches also include a `meta_vars` object with the text captured by each `$VAR`.
+The response reports which `engine` ran (`zoekt` or `structural`), the compiled `engine_query`, a `truncated` flag when any cap cut the results, facet counts, and the matched files. Each facet value has `active: true` when included or `excluded: true` when negatively selected. Each file carries the `commit` it was indexed at (empty for non-git sources) and a `dirty` flag; structural matches also include a `meta_vars` object with the text captured by each `$VAR`.
 
 ### `GET /api/read`
 

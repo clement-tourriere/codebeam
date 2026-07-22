@@ -51,8 +51,11 @@ type Request struct {
 	// DirtyFilter restricts worktree scans to files with ("dirty") or without
 	// ("clean") uncommitted changes, like lexical search's dirty facet.
 	DirtyFilter string
-	MaxMatches  int // optional per-request override of the engine cap
-	Allowed     []store.Repo
+	// Exclude removes matching facet values with the same semantics as lexical
+	// search (repositories, branches, paths, providers, working-tree state, …).
+	Exclude    codesearch.FacetFilters
+	MaxMatches int // optional per-request override of the engine cap
+	Allowed    []store.Repo
 }
 
 // facetRequest maps the structural request onto the shared codesearch
@@ -70,6 +73,7 @@ func (r Request) facetRequest(displayLang string) codesearch.Request {
 		FreshnessFilter: r.FreshnessFilter,
 		DirtyFilter:     r.DirtyFilter,
 		LangFilter:      displayLang,
+		Exclude:         r.Exclude,
 		Allowed:         r.Allowed,
 	}
 }
@@ -152,17 +156,25 @@ func (e *Engine) Search(ctx context.Context, req Request) (codesearch.Result, er
 		return codesearch.Result{}, err
 	}
 
+	excluded := codesearch.NormalizeFacetFilters(req.Exclude)
 	scan := &scanState{
-		engine:      e,
-		pattern:     pattern,
-		lang:        lang,
-		exts:        extensionSet(lang),
-		pathRe:      pathRe,
-		topFilter:   req.TopPathFilter,
-		extFilter:   req.ExtFilter,
-		dirtyFilter: codesearch.NormalizeDirtyFilter(req.DirtyFilter),
-		maxFiles:    e.maxFiles(),
-		maxMatches:  e.maxMatches(req),
+		engine:         e,
+		pattern:        pattern,
+		lang:           lang,
+		exts:           extensionSet(lang),
+		pathRe:         pathRe,
+		topFilter:      req.TopPathFilter,
+		extFilter:      req.ExtFilter,
+		excludedTop:    excluded.TopPaths,
+		excludedExt:    excluded.Extensions,
+		excludedBranch: excluded.Branches,
+		excludedDirty:  excluded.Dirty,
+		dirtyFilter:    codesearch.NormalizeDirtyFilter(req.DirtyFilter),
+		maxFiles:       e.maxFiles(),
+		maxMatches:     e.maxMatches(req),
+	}
+	if containsFold(excluded.Languages, lang) || containsFold(excluded.Languages, langDisplayNames[lang]) {
+		scan.skipAll = true
 	}
 	for _, repo := range repos {
 		if scan.capped() || ctx.Err() != nil {
@@ -203,12 +215,13 @@ func (e *Engine) Search(ctx context.Context, req Request) (codesearch.Result, er
 	return result, nil
 }
 
-// structuralFacetGroups drops the language facet, which makes no sense for
-// structural results: the language is fixed by the search itself.
+// structuralFacetGroups drops facets that do not make sense for structural
+// results: language is fixed by the query and AST matches have no ctags symbol
+// kind metadata.
 func structuralFacetGroups(groups []codesearch.FacetGroup) []codesearch.FacetGroup {
 	out := groups[:0]
 	for _, group := range groups {
-		if group.Field == "language" {
+		if group.Field == "language" || group.Field == "symbol_kind" {
 			continue
 		}
 		out = append(out, group)
@@ -217,16 +230,21 @@ func structuralFacetGroups(groups []codesearch.FacetGroup) []codesearch.FacetGro
 }
 
 type scanState struct {
-	engine      *Engine
-	pattern     string
-	lang        string
-	exts        map[string]bool
-	pathRe      *regexp.Regexp
-	topFilter   string
-	extFilter   string
-	dirtyFilter string // "dirty", "clean", or "" (normalized)
-	maxFiles    int
-	maxMatches  int
+	engine         *Engine
+	pattern        string
+	lang           string
+	exts           map[string]bool
+	pathRe         *regexp.Regexp
+	topFilter      string
+	extFilter      string
+	excludedTop    []string
+	excludedExt    []string
+	excludedBranch []string
+	excludedDirty  []string
+	dirtyFilter    string // "dirty", "clean", or "" (normalized)
+	skipAll        bool
+	maxFiles       int
+	maxMatches     int
 
 	mu         sync.Mutex
 	files      []codesearch.FileMatch
@@ -288,6 +306,16 @@ func (s *scanState) wantsPath(rel string) bool {
 	if !codesearch.MatchExtension(rel, s.extFilter) {
 		return false
 	}
+	for _, value := range s.excludedTop {
+		if codesearch.MatchTopPath(rel, value) {
+			return false
+		}
+	}
+	for _, value := range s.excludedExt {
+		if codesearch.MatchExtension(rel, value) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -297,6 +325,9 @@ func (s *scanState) wantsPath(rel string) bool {
 // git object store — no worktree mutation, no temp checkout.
 func (s *scanState) searchRepo(ctx context.Context, repo store.Repo, branch string) error {
 	branch = strings.TrimSpace(branch)
+	if s.skipAll || (branch != "" && containsString(s.excludedBranch, branch)) {
+		return nil
+	}
 	// Branch scans read committed blobs, so dirtiness only applies to worktree
 	// scans of local repos — the same rule lexical search uses.
 	var dirty map[string]struct{}
@@ -334,7 +365,11 @@ func (s *scanState) searchRepo(ctx context.Context, repo store.Repo, branch stri
 
 func (s *scanState) matchFile(ctx context.Context, repo store.Repo, branch string, file sourceFile, dirty map[string]struct{}) {
 	_, isDirty := dirty[file.relPath]
-	if (s.dirtyFilter == "dirty" && !isDirty) || (s.dirtyFilter == "clean" && isDirty) {
+	dirtyValue := "clean"
+	if isDirty {
+		dirtyValue = "dirty"
+	}
+	if (s.dirtyFilter == "dirty" && !isDirty) || (s.dirtyFilter == "clean" && isDirty) || containsFold(s.excludedDirty, dirtyValue) {
 		return
 	}
 	matches, truncated, err := s.engine.Matcher.MatchBytes(ctx, s.pattern, s.lang, file.data, s.remainingMatches())
@@ -442,6 +477,24 @@ func (s *scanState) produceBranch(ctx context.Context, repo store.Repo, branch s
 
 // searchableContent filters out binary and non-UTF-8 files, which cannot be
 // parsed structurally.
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func searchableContent(data []byte) bool {
 	if len(data) == 0 {
 		return false

@@ -92,6 +92,24 @@ func TestParseArgsInterspersed(t *testing.T) {
 	}
 }
 
+func TestToolArgsKeepsFacetListsAndBoolean(t *testing.T) {
+	got := toolArgs(map[string]any{
+		"exclude_repos": []string{" local/a ", "", "local/b"},
+		"facets":        true,
+		"unset":         false,
+	})
+	values, ok := got["exclude_repos"].([]string)
+	if !ok || strings.Join(values, ",") != "local/a,local/b" {
+		t.Fatalf("exclude_repos = %#v", got["exclude_repos"])
+	}
+	if got["facets"] != true {
+		t.Fatalf("facets = %#v", got["facets"])
+	}
+	if _, ok := got["unset"]; ok {
+		t.Fatalf("false option should be omitted: %#v", got)
+	}
+}
+
 func TestConfigRoundTrip(t *testing.T) {
 	t.Setenv(envConfigPath, filepath.Join(t.TempDir(), "cli.json"))
 	cf, err := loadConfig()
@@ -117,15 +135,16 @@ func TestConfigRoundTrip(t *testing.T) {
 
 // fakeCodebeam is an httptest stand-in for the server's OAuth + /mcp surface.
 type fakeCodebeam struct {
-	t          *testing.T
-	mu         chan struct{} // 1-slot semaphore keeps handler state race-free
-	base       string
-	code       string
-	verifier   string // expected PKCE verifier hash — not enforced, presence-checked
-	access     string
-	refresh    string
-	refreshed  int
-	toolCalled string
+	t             *testing.T
+	mu            chan struct{} // 1-slot semaphore keeps handler state race-free
+	base          string
+	code          string
+	verifier      string // expected PKCE verifier hash — not enforced, presence-checked
+	access        string
+	refresh       string
+	refreshed     int
+	toolCalled    string
+	toolArguments map[string]any
 }
 
 func newFakeCodebeam(t *testing.T) (*fakeCodebeam, *httptest.Server) {
@@ -202,7 +221,8 @@ func (f *fakeCodebeam) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ID     json.RawMessage `json:"id"`
 			Params struct {
-				Name string `json:"name"`
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
 			} `json:"params"`
 		}
 		json.NewDecoder(r.Body).Decode(&req) // nolint:errcheck
@@ -212,6 +232,7 @@ func (f *fakeCodebeam) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.toolCalled = req.Params.Name
+		f.toolArguments = req.Params.Arguments
 		json.NewEncoder(w).Encode(map[string]any{ // nolint:errcheck
 			"jsonrpc": "2.0", "id": 1,
 			"result": map[string]any{
@@ -253,6 +274,17 @@ func testApp(t *testing.T) (*app, *bytes.Buffer, *bytes.Buffer) {
 	}, &stdout, &stderr
 }
 
+func stringArgs(value any) string {
+	raw, _ := value.([]any)
+	values := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if text, ok := item.(string); ok {
+			values = append(values, text)
+		}
+	}
+	return strings.Join(values, ",")
+}
+
 func TestLoginThenSearchEndToEnd(t *testing.T) {
 	fake, srv := newFakeCodebeam(t)
 	a, stdout, stderr := testApp(t)
@@ -269,11 +301,20 @@ func TestLoginThenSearchEndToEnd(t *testing.T) {
 
 	// The login became the default server, so a bare search finds it.
 	stdout.Reset()
-	if code := a.run([]string{"search", "foo", "--lang", "go"}); code != 0 {
+	if code := a.run([]string{"search", "foo", "--lang", "go", "--repo", "local/a", "--repo", "local/b", "--exclude-repo", "local/noise", "--facets"}); code != 0 {
 		t.Fatalf("search exit %d, stderr: %s", code, stderr.String())
 	}
 	if fake.toolCalled != "search_code" {
 		t.Fatalf("search called %q, want search_code", fake.toolCalled)
+	}
+	if fake.toolArguments["facets"] != true {
+		t.Fatalf("facets argument = %#v", fake.toolArguments["facets"])
+	}
+	if got := stringArgs(fake.toolArguments["repos"]); got != "local/a,local/b" {
+		t.Fatalf("repos argument = %q", got)
+	}
+	if got := stringArgs(fake.toolArguments["exclude_repos"]); got != "local/noise" {
+		t.Fatalf("exclude_repos argument = %q", got)
 	}
 	if !strings.Contains(stdout.String(), "Indexed repositories") {
 		t.Fatalf("search output: %s", stdout.String())

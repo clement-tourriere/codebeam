@@ -202,7 +202,8 @@ func (s *Server) initializeResult(params json.RawMessage) map[string]any {
 		"capabilities":    map[string]any{"tools": map[string]any{}},
 		"serverInfo":      map[string]any{"name": serverName, "version": serverVersion},
 		"instructions": "Codebeam exposes your locally indexed repositories as a retrieval toolbox. " +
-			"Use search_code for lexical/regex (Zoekt) search across all indexed repos, structural_search " +
+			"Search tools support positive and negative facets; set facets=true to inspect counts, then use " +
+			"exclude_repos/exclude_langs/etc. to remove noisy buckets. Use search_code for lexical/regex (Zoekt) search across all indexed repos, structural_search " +
 			"to match code by AST shape with ast-grep patterns, symbol_search to find where a symbol is " +
 			"defined, find_references for word-boundary usages of a symbol, read_file to read a bounded " +
 			"line range with provenance, file_tree to list a repository's files, list_repos to see " +
@@ -251,12 +252,92 @@ func (s *Server) handleToolCall(ctx context.Context, id, params json.RawMessage)
 	return resultResponse(id, toolResult(text, false))
 }
 
+// facetArgs is shared by every search-like MCP tool. Singular positive facets
+// preserve the original API; exclusions are arrays because hiding several
+// repositories/languages is the common drill-down workflow.
+type facetArgs struct {
+	Repo       string   `json:"repo"`
+	Repos      []string `json:"repos"`
+	Branch     string   `json:"branch"`
+	TopPath    string   `json:"top_path"`
+	Extension  string   `json:"extension"`
+	Lang       string   `json:"lang"`
+	Source     string   `json:"source"`
+	Provider   string   `json:"provider"`
+	Dirty      string   `json:"dirty"`
+	SymbolKind string   `json:"symbol_kind"`
+	Freshness  string   `json:"freshness"`
+	Sort       string   `json:"sort"`
+	Facets     bool     `json:"facets"`
+
+	ExcludeRepos       []string `json:"exclude_repos"`
+	ExcludeBranches    []string `json:"exclude_branches"`
+	ExcludeTopPaths    []string `json:"exclude_top_paths"`
+	ExcludeExtensions  []string `json:"exclude_extensions"`
+	ExcludeLangs       []string `json:"exclude_langs"`
+	ExcludeSources     []string `json:"exclude_sources"`
+	ExcludeProviders   []string `json:"exclude_providers"`
+	ExcludeDirty       []string `json:"exclude_dirty"`
+	ExcludeSymbolKinds []string `json:"exclude_symbol_kinds"`
+	ExcludeFreshness   []string `json:"exclude_freshness"`
+}
+
+func (in facetArgs) repoFilters() []string {
+	values := append([]string(nil), in.Repos...)
+	if repo := strings.TrimSpace(in.Repo); repo != "" {
+		values = append(values, repo)
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func (in facetArgs) exclusions() codesearch.FacetFilters {
+	return codesearch.FacetFilters{
+		Repos:       in.ExcludeRepos,
+		Branches:    in.ExcludeBranches,
+		TopPaths:    in.ExcludeTopPaths,
+		Extensions:  in.ExcludeExtensions,
+		Languages:   in.ExcludeLangs,
+		Sources:     in.ExcludeSources,
+		Providers:   in.ExcludeProviders,
+		Dirty:       in.ExcludeDirty,
+		SymbolKinds: in.ExcludeSymbolKinds,
+		Freshness:   in.ExcludeFreshness,
+	}
+}
+
+func (in facetArgs) apply(req *codesearch.Request) {
+	req.RepoFilters = in.repoFilters()
+	req.BranchFilter = strings.TrimSpace(in.Branch)
+	req.TopPathFilter = strings.TrimSpace(in.TopPath)
+	req.ExtFilter = strings.TrimSpace(in.Extension)
+	req.LangFilter = strings.TrimSpace(in.Lang)
+	req.SourceFilter = strings.TrimSpace(in.Source)
+	req.ProviderFilter = strings.TrimSpace(in.Provider)
+	req.DirtyFilter = strings.TrimSpace(in.Dirty)
+	req.SymbolKindFilter = strings.TrimSpace(in.SymbolKind)
+	req.FreshnessFilter = strings.TrimSpace(in.Freshness)
+	req.Sort = strings.TrimSpace(in.Sort)
+	req.Exclude = in.exclusions()
+}
+
 func (s *Server) callSearch(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
+		facetArgs
 		Query      string `json:"query"`
-		Repo       string `json:"repo"`
 		Path       string `json:"path"`
-		Lang       string `json:"lang"`
 		MaxResults int    `json:"max_results"`
 	}
 	if err := unmarshalArgs(args, &in); err != nil {
@@ -266,20 +347,15 @@ func (s *Server) callSearch(ctx context.Context, args json.RawMessage) (string, 
 	if query == "" {
 		return "", errors.New("query is required")
 	}
-	return s.runSearch(ctx, "Search: "+backquote(query), codesearch.Request{
-		Query:      query,
-		RepoFilter: strings.TrimSpace(in.Repo),
-		PathFilter: strings.TrimSpace(in.Path),
-		LangFilter: strings.TrimSpace(in.Lang),
-	}, in.MaxResults)
+	req := codesearch.Request{Query: query, PathFilter: strings.TrimSpace(in.Path)}
+	in.apply(&req)
+	return s.runSearch(ctx, "Search: "+backquote(query), req, in.MaxResults, in.Facets)
 }
 
 func (s *Server) callStructuralSearch(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
+		facetArgs
 		Pattern    string `json:"pattern"`
-		Lang       string `json:"lang"`
-		Repo       string `json:"repo"`
-		Branch     string `json:"branch"`
 		Path       string `json:"path"`
 		MaxResults int    `json:"max_results"`
 	}
@@ -302,25 +378,31 @@ func (s *Server) callStructuralSearch(ctx context.Context, args json.RawMessage)
 		return "", err
 	}
 	result, err := s.Structural.Search(ctx, structural.Request{
-		Pattern:      pattern,
-		Lang:         in.Lang,
-		RepoFilter:   strings.TrimSpace(in.Repo),
-		BranchFilter: strings.TrimSpace(in.Branch),
-		PathFilter:   strings.TrimSpace(in.Path),
-		Allowed:      repos,
+		Pattern:         pattern,
+		Lang:            in.Lang,
+		RepoFilters:     in.repoFilters(),
+		BranchFilter:    strings.TrimSpace(in.Branch),
+		PathFilter:      strings.TrimSpace(in.Path),
+		TopPathFilter:   strings.TrimSpace(in.TopPath),
+		ExtFilter:       strings.TrimSpace(in.Extension),
+		SourceFilter:    strings.TrimSpace(in.Source),
+		ProviderFilter:  strings.TrimSpace(in.Provider),
+		FreshnessFilter: strings.TrimSpace(in.Freshness),
+		DirtyFilter:     strings.TrimSpace(in.Dirty),
+		Exclude:         in.exclusions(),
+		Allowed:         repos,
 	})
 	if err != nil {
 		return "", err
 	}
 	heading := "Structural search: " + backquote(pattern) + " (" + strings.ToLower(strings.TrimSpace(in.Lang)) + ")"
-	return formatSearchResult(heading, result, maxFiles), nil
+	return formatSearchResult(heading, result, maxFiles, in.Facets), nil
 }
 
 func (s *Server) callSymbolSearch(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
+		facetArgs
 		Symbol     string `json:"symbol"`
-		Repo       string `json:"repo"`
-		Lang       string `json:"lang"`
 		MaxResults int    `json:"max_results"`
 	}
 	if err := unmarshalArgs(args, &in); err != nil {
@@ -330,19 +412,15 @@ func (s *Server) callSymbolSearch(ctx context.Context, args json.RawMessage) (st
 	if symbol == "" {
 		return "", errors.New("symbol is required")
 	}
-	return s.runSearch(ctx, "Symbol definitions: "+backquote(symbol), codesearch.Request{
-		Query:      symbol,
-		RepoFilter: strings.TrimSpace(in.Repo),
-		LangFilter: strings.TrimSpace(in.Lang),
-		Symbols:    true,
-	}, in.MaxResults)
+	req := codesearch.Request{Query: symbol, Symbols: true}
+	in.apply(&req)
+	return s.runSearch(ctx, "Symbol definitions: "+backquote(symbol), req, in.MaxResults, in.Facets)
 }
 
 func (s *Server) callFindReferences(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
+		facetArgs
 		Symbol     string `json:"symbol"`
-		Repo       string `json:"repo"`
-		Lang       string `json:"lang"`
 		MaxResults int    `json:"max_results"`
 	}
 	if err := unmarshalArgs(args, &in); err != nil {
@@ -355,17 +433,15 @@ func (s *Server) callFindReferences(ctx context.Context, args json.RawMessage) (
 	// Word-boundary anchor so "References to Get" doesn't also match "Getter" or
 	// "forGetting" — the precision agents lose with a raw grep.
 	query := `\b` + regexp.QuoteMeta(symbol) + `\b`
-	return s.runSearch(ctx, "References to "+backquote(symbol), codesearch.Request{
-		Query:      query,
-		RepoFilter: strings.TrimSpace(in.Repo),
-		LangFilter: strings.TrimSpace(in.Lang),
-	}, in.MaxResults)
+	req := codesearch.Request{Query: query}
+	in.apply(&req)
+	return s.runSearch(ctx, "References to "+backquote(symbol), req, in.MaxResults, in.Facets)
 }
 
 // runSearch scopes a request to every indexed repository and renders the result
 // as a citation-tagged text bundle. It backs the content, symbol, and reference
 // tools; heading labels the bundle for the calling tool.
-func (s *Server) runSearch(ctx context.Context, heading string, req codesearch.Request, maxFiles int) (string, error) {
+func (s *Server) runSearch(ctx context.Context, heading string, req codesearch.Request, maxFiles int, includeFacets bool) (string, error) {
 	if maxFiles <= 0 {
 		maxFiles = s.MaxResults
 	}
@@ -378,7 +454,7 @@ func (s *Server) runSearch(ctx context.Context, heading string, req codesearch.R
 	if err != nil {
 		return "", err
 	}
-	return formatSearchResult(heading, result, maxFiles), nil
+	return formatSearchResult(heading, result, maxFiles, includeFacets), nil
 }
 
 func (s *Server) callRead(ctx context.Context, args json.RawMessage) (string, error) {
@@ -711,23 +787,68 @@ func (s *Server) resolveRepo(ctx context.Context, raw string) (*store.Repo, erro
 	return nil, fmt.Errorf("repository %q is not indexed", raw)
 }
 
+func withFacetProperties(properties map[string]any) map[string]any {
+	array := func(description string) map[string]any {
+		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": description}
+	}
+	common := map[string]any{
+		"repo":        map[string]any{"type": "string", "description": "Optional: restrict to one repository full name (legacy shorthand for repos)."},
+		"repos":       array("Optional: repository full names to include (OR)."),
+		"branch":      map[string]any{"type": "string", "description": "Optional: restrict to one indexed branch."},
+		"top_path":    map[string]any{"type": "string", "description": "Optional: restrict to one top-level path facet value."},
+		"extension":   map[string]any{"type": "string", "description": "Optional: restrict to a file extension (e.g. .go)."},
+		"lang":        map[string]any{"type": "string", "description": "Optional: restrict to one language facet value."},
+		"source":      map[string]any{"type": "string", "description": "Optional: restrict to a source host (e.g. github.com or local)."},
+		"provider":    map[string]any{"type": "string", "description": "Optional: restrict to a provider (github, gitlab, local)."},
+		"dirty":       map[string]any{"type": "string", "enum": []string{"dirty", "clean"}, "description": "Optional: restrict by working-tree state."},
+		"symbol_kind": map[string]any{"type": "string", "description": "Optional: restrict to a symbol-kind facet value."},
+		"freshness":   map[string]any{"type": "string", "enum": []string{"hour", "day", "week", "month", "older", "unknown"}, "description": "Optional: restrict by index freshness."},
+		"sort":        map[string]any{"type": "string", "enum": []string{"relevance", "repo", "path", "indexed_desc", "indexed_asc", "match_count"}, "description": "Optional result ordering (lexical search only)."},
+		"facets":      map[string]any{"type": "boolean", "description": "Include compact facet counts in the response so the search can be refined (default false)."},
+
+		"exclude_repos":        array("Repository full names to exclude."),
+		"exclude_branches":     array("Branch facet values to exclude."),
+		"exclude_top_paths":    array("Top-level path facet values to exclude."),
+		"exclude_extensions":   array("File extensions to exclude (e.g. .md, .json)."),
+		"exclude_langs":        array("Language facet values to exclude."),
+		"exclude_sources":      array("Source hosts to exclude."),
+		"exclude_providers":    array("Providers to exclude."),
+		"exclude_dirty":        array("Working-tree values to exclude: dirty and/or clean."),
+		"exclude_symbol_kinds": array("Symbol-kind facet values to exclude."),
+		"exclude_freshness":    array("Freshness facet values to exclude."),
+	}
+	for key, value := range common {
+		if _, exists := properties[key]; !exists {
+			properties[key] = value
+		}
+	}
+	return properties
+}
+
+func withStructuralFacetProperties(properties map[string]any) map[string]any {
+	properties = withFacetProperties(properties)
+	delete(properties, "symbol_kind")
+	delete(properties, "exclude_symbol_kinds")
+	delete(properties, "sort")
+	return properties
+}
+
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
 			"name": "search_code",
 			"description": "Lexical/regex code search across every indexed repository, powered by Zoekt. " +
 				"Returns ranked snippets with repo:path:line citations and a dirty flag for uncommitted " +
-				"working-tree matches. The query supports Zoekt syntax (regex by default, plus file:, lang:, " +
+				"working-tree matches. Include or exclude multiple facet values (repositories, languages, paths, providers, etc.); " +
+				"set facets=true to receive counts for iterative drill-down. The query supports Zoekt syntax (regex by default, plus file:, lang:, " +
 				"sym:, case: and boolean operators).",
 			"inputSchema": map[string]any{
 				"type": "object",
-				"properties": map[string]any{
+				"properties": withFacetProperties(map[string]any{
 					"query":       map[string]any{"type": "string", "description": "Zoekt query (regex or literal)."},
-					"repo":        map[string]any{"type": "string", "description": "Optional: restrict to one repository full name (e.g. local/myrepo)."},
 					"path":        map[string]any{"type": "string", "description": "Optional: restrict to file paths matching this regex."},
-					"lang":        map[string]any{"type": "string", "description": "Optional: restrict to a language (e.g. go, python, typescript)."},
 					"max_results": map[string]any{"type": "integer", "description": "Optional: maximum number of files to return (default 20)."},
-				},
+				}),
 				"required": []string{"query"},
 			},
 		},
@@ -741,14 +862,13 @@ func toolDefinitions() []map[string]any {
 				"Slower than lexical search; narrow with repo/path when possible.",
 			"inputSchema": map[string]any{
 				"type": "object",
-				"properties": map[string]any{
+				"properties": withStructuralFacetProperties(map[string]any{
 					"pattern":     map[string]any{"type": "string", "description": "ast-grep pattern (valid code plus $VAR / $$$ metavariables)."},
 					"lang":        map[string]any{"type": "string", "description": "Language to parse pattern and files as: " + strings.Join(structural.SupportedLanguages(), ", ") + "."},
-					"repo":        map[string]any{"type": "string", "description": "Optional: restrict to one repository full name (e.g. local/myrepo)."},
 					"branch":      map[string]any{"type": "string", "description": "Optional: search a specific branch's committed state instead of the working tree/primary branch."},
 					"path":        map[string]any{"type": "string", "description": "Optional: restrict to file paths matching this regex."},
 					"max_results": map[string]any{"type": "integer", "description": "Optional: maximum number of files to return (default 20)."},
-				},
+				}),
 				"required": []string{"pattern", "lang"},
 			},
 		},
@@ -760,12 +880,10 @@ func toolDefinitions() []map[string]any {
 				"when the repository was indexed; if it was not, this returns no matches.",
 			"inputSchema": map[string]any{
 				"type": "object",
-				"properties": map[string]any{
+				"properties": withFacetProperties(map[string]any{
 					"symbol":      map[string]any{"type": "string", "description": "Symbol name or regex to locate (e.g. NewServer or ^Handle)."},
-					"repo":        map[string]any{"type": "string", "description": "Optional: restrict to one repository full name."},
-					"lang":        map[string]any{"type": "string", "description": "Optional: restrict to a language (e.g. go, python)."},
 					"max_results": map[string]any{"type": "integer", "description": "Optional: maximum number of files to return (default 20)."},
-				},
+				}),
 				"required": []string{"symbol"},
 			},
 		},
@@ -775,12 +893,10 @@ func toolDefinitions() []map[string]any {
 				"Pair with symbol_search (which finds the definition) to navigate code. Accepts a literal symbol name.",
 			"inputSchema": map[string]any{
 				"type": "object",
-				"properties": map[string]any{
+				"properties": withFacetProperties(map[string]any{
 					"symbol":      map[string]any{"type": "string", "description": "Literal symbol/identifier to find references to (e.g. NewServer)."},
-					"repo":        map[string]any{"type": "string", "description": "Optional: restrict to one repository full name."},
-					"lang":        map[string]any{"type": "string", "description": "Optional: restrict to a language (e.g. go, python)."},
 					"max_results": map[string]any{"type": "integer", "description": "Optional: maximum number of files to return (default 20)."},
-				},
+				}),
 				"required": []string{"symbol"},
 			},
 		},
@@ -834,15 +950,21 @@ func toolDefinitions() []map[string]any {
 	}
 }
 
-func formatSearchResult(heading string, result codesearch.Result, maxFiles int) string {
+func formatSearchResult(heading string, result codesearch.Result, maxFiles int, includeFacets bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n", heading)
 	if result.EmptyReason != "" {
 		b.WriteString(result.EmptyReason + "\n")
+		if includeFacets {
+			writeSearchFacets(&b, result)
+		}
 		return b.String()
 	}
 	if result.MatchCount == 0 || len(result.Files) == 0 {
 		b.WriteString("No matches.\n")
+		if includeFacets {
+			writeSearchFacets(&b, result)
+		}
 		return b.String()
 	}
 	if maxFiles <= 0 {
@@ -857,6 +979,9 @@ func formatSearchResult(heading string, result codesearch.Result, maxFiles int) 
 		fmt.Fprintf(&b, ", showing %d", shown)
 	}
 	b.WriteString(".\n\n")
+	if includeFacets {
+		writeSearchFacets(&b, result)
+	}
 	for _, file := range result.Files[:shown] {
 		writeFileMatch(&b, file)
 	}
@@ -867,6 +992,49 @@ func formatSearchResult(heading string, result codesearch.Result, maxFiles int) 
 		b.WriteString("_Results are partial: the search hit a file/match cap or the timeout. Narrow with repo/path filters._\n")
 	}
 	return b.String()
+}
+
+func writeSearchFacets(b *strings.Builder, result codesearch.Result) {
+	groups := result.Facets
+	if len(groups) == 0 {
+		return
+	}
+	b.WriteString("\n## Facets\n")
+	for _, group := range groups {
+		if len(group.Values) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "- %s: ", group.Label)
+		limit := min(len(group.Values), 8)
+		for i, value := range group.Values[:limit] {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			state := ""
+			if value.Active {
+				state = "+"
+			} else if value.Excluded {
+				state = "−"
+			}
+			label := value.Label
+			if label == "" {
+				label = value.Value
+			}
+			fmt.Fprintf(b, "%s%s (%d)", state, backquote(label), value.Count)
+			if value.Value != "" && !strings.EqualFold(value.Value, label) {
+				fmt.Fprintf(b, "=%s", backquote(value.Value))
+			}
+		}
+		if len(group.Values) > limit {
+			fmt.Fprintf(b, ", +%d more", len(group.Values)-limit)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Use the facet value (shown after = when different from its label) in include/exclude arguments. `+` is included; `−` is excluded.\n")
+	if result.FacetsTruncated {
+		fmt.Fprintf(b, "_Facet counts cover the first %d of %d matched files._\n", result.FacetedFileCount, result.FileCount)
+	}
+	b.WriteString("\n")
 }
 
 func writeFileMatch(b *strings.Builder, file codesearch.FileMatch) {

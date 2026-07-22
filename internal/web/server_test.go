@@ -110,6 +110,34 @@ func TestSearchPageRendersStructuralResults(t *testing.T) {
 	}
 }
 
+func TestSearchPageRendersExcludedFacetState(t *testing.T) {
+	ctx := context.Background()
+	srv, user, repo := newTestAPIServer(t, ctx)
+	if err := srv.indexer.Reindex(ctx, repo.ID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	full, err := New(config.Config{TemplateGlob: filepath.Join("..", "..", "templates", "*.html"), SessionSecret: "test-secret", GitLabBaseURL: "https://gitlab.com"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.templates = full.templates
+	srv.chromaCSS = full.chromaCSS
+
+	req := httptest.NewRequest(http.MethodGet, "/search?q=UniqueNeedle&exclude_lang=Go", nil)
+	addSessionCookie(t, srv, req, user.ID)
+	rr := httptest.NewRecorder()
+	srv.route(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"filter-chip-excluded", "filter-chip-exclude-icon", "excluded", `name="exclude_lang" value="Go"`, "Stop excluding Go"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("excluded facet UI missing %q", want)
+		}
+	}
+}
+
 func TestSafeJoinAllowsRepoPath(t *testing.T) {
 	root := t.TempDir()
 	got, err := safeJoin(root, "internal/app.go")
@@ -320,6 +348,19 @@ func TestSearchURLPersistsMultipleRepoFilters(t *testing.T) {
 	}
 }
 
+func TestSearchURLPersistsFacetExclusions(t *testing.T) {
+	got := searchURL("/search", SearchParams{Query: "panic", Exclude: codesearch.FacetFilters{
+		Repos: []string{"github.com/acme/api", "local/app"}, Languages: []string{"Go"}, Extensions: []string{".md"},
+	}})
+	for _, want := range []string{
+		"exclude_repo=github.com%2Facme%2Fapi", "exclude_repo=local%2Fapp", "exclude_lang=Go", "exclude_ext=.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("URL %q missing %q", got, want)
+		}
+	}
+}
+
 func TestSearchParamsFromQueryNormalizesMultipleRepoFilters(t *testing.T) {
 	params := searchParamsFromQuery(url.Values{"repo": []string{" github.com/acme/api ", "", "gitlab.com/acme/web", "github.com/acme/api"}})
 	if params.Repo != "github.com/acme/api" {
@@ -327,6 +368,50 @@ func TestSearchParamsFromQueryNormalizesMultipleRepoFilters(t *testing.T) {
 	}
 	if got, want := strings.Join(params.Repos, ","), "github.com/acme/api,gitlab.com/acme/web"; got != want {
 		t.Fatalf("repos = %q, want %q", got, want)
+	}
+}
+
+func TestSearchParamsFromQueryNormalizesFacetExclusions(t *testing.T) {
+	params := searchParamsFromQuery(url.Values{
+		"exclude_repo":      []string{" local/app ", "local/app", ""},
+		"exclude_ext":       []string{"go", ".MD"},
+		"exclude_dirty":     []string{"true", "invalid"},
+		"exclude_freshness": []string{"WEEK", "invalid"},
+	})
+	if got := strings.Join(params.Exclude.Repos, ","); got != "local/app" {
+		t.Fatalf("excluded repos = %q", got)
+	}
+	if got := strings.Join(params.Exclude.Extensions, ","); got != ".go,.md" {
+		t.Fatalf("excluded extensions = %q", got)
+	}
+	if got := strings.Join(params.Exclude.Dirty, ","); got != "dirty" {
+		t.Fatalf("excluded working-tree values = %q", got)
+	}
+	if got := strings.Join(params.Exclude.Freshness, ","); got != "week" {
+		t.Fatalf("excluded freshness = %q", got)
+	}
+}
+
+func TestFacetURLsMoveBetweenIncludeAndExclude(t *testing.T) {
+	params := SearchParams{Query: "panic", Repos: []string{"local/app"}}
+	excludedURL := string(facetExcludeURL("/search", params, "repo", "local/app"))
+	values, err := url.Parse(excludedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Query().Get("repo") != "" || values.Query().Get("exclude_repo") != "local/app" {
+		t.Fatalf("exclude URL did not move repo to negative state: %q", excludedURL)
+	}
+
+	backToIncluded := string(facetURL("/search", SearchParams{
+		Query: "panic", Exclude: codesearch.FacetFilters{Repos: []string{"local/app"}},
+	}, "repo", "local/app"))
+	values, err = url.Parse(backToIncluded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Query().Get("repo") != "local/app" || values.Query().Get("exclude_repo") != "" {
+		t.Fatalf("include URL did not move repo to positive state: %q", backToIncluded)
 	}
 }
 

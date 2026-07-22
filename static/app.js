@@ -297,11 +297,13 @@
     var tokenList = root.querySelector("[data-repo-combobox-selected]");
     var menu = root.querySelector("[data-repo-combobox-menu]");
     var options = Array.from(root.querySelectorAll("[data-repo-option]"));
+    var excludeButtons = Array.from(root.querySelectorAll("[data-repo-exclude]"));
     var empty = root.querySelector("[data-repo-combobox-empty]");
     var status = root.querySelector("[data-repo-combobox-status]");
     var clear = root.querySelector("[data-repo-combobox-clear]");
     var activeOption = null;
     var selected = [];
+    var excluded = [];
 
     if (!input || !hiddenContainer || !tokenList || !menu || options.length === 0) {
       return;
@@ -339,23 +341,54 @@
       });
     }
 
+    function optionRow(option) {
+      return (option && option.closest && option.closest("[data-repo-option-row]")) || option;
+    }
+
     function selectedSet() {
       var set = {};
-      selected.forEach(function (value) {
+      selected.concat(excluded).forEach(function (value) {
         set[value] = true;
       });
       return set;
     }
 
+    function selectionCount() {
+      return uniqueValues(selected.concat(excluded)).length;
+    }
+
+    function selectionSummary() {
+      var parts = [];
+      if (selected.length > 0) {
+        parts.push(selected.length + " included");
+      }
+      if (excluded.length > 0) {
+        parts.push(excluded.length + " excluded");
+      }
+      return parts.join(", ");
+    }
+
     function updateClear() {
       if (clear) {
-        clear.classList.toggle("invisible", selected.length === 0 && input.value.trim() === "");
+        clear.classList.toggle("invisible", selectionCount() === 0 && input.value.trim() === "");
       }
+    }
+
+    function updatePlaceholder() {
+      input.placeholder = selectionCount() === 0 ? "Type to add repos" : "Add another repo";
+    }
+
+    function banIcon() {
+      var span = document.createElement("span");
+      span.className = "inline-flex shrink-0";
+      span.setAttribute("aria-hidden", "true");
+      span.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>';
+      return span;
     }
 
     function visibleOptions() {
       return options.filter(function (option) {
-        return !option.hidden;
+        return !optionRow(option).hidden;
       });
     }
 
@@ -379,37 +412,44 @@
       hiddenContainer.innerHTML = "";
       tokenList.innerHTML = "";
 
-      selected.forEach(function (value) {
+      function renderToken(value, isExcluded) {
         var option = findByValue(value);
         var label = optionLabel(option) || value;
 
         var hidden = document.createElement("input");
         hidden.type = "hidden";
-        hidden.name = "repo";
+        hidden.name = isExcluded ? "exclude_repo" : "repo";
         hidden.value = value;
         hiddenContainer.appendChild(hidden);
 
         var token = document.createElement("span");
-        token.className = "badge badge-primary badge-lg max-w-full gap-1";
-        token.title = value;
+        token.className = isExcluded ? "badge badge-error badge-outline badge-lg max-w-full gap-1" : "badge badge-primary badge-lg max-w-full gap-1";
+        token.title = (isExcluded ? "Excluded: " : "Included: ") + value;
 
         var text = document.createElement("span");
         text.className = "truncate";
         text.textContent = label;
+        if (isExcluded) {
+          token.appendChild(banIcon());
+        }
         token.appendChild(text);
 
         var remove = document.createElement("button");
         remove.type = "button";
         remove.className = "btn btn-ghost btn-xs btn-circle";
-        remove.setAttribute("aria-label", "Remove " + label + " from repository filters");
+        remove.setAttribute("aria-label", "Remove " + label + " from " + (isExcluded ? "excluded" : "included") + " repository filters");
         remove.setAttribute("data-repo-remove", value);
+        remove.setAttribute("data-repo-remove-mode", isExcluded ? "exclude" : "include");
         remove.textContent = "×";
         token.appendChild(remove);
 
         tokenList.appendChild(token);
-      });
+      }
 
-      input.placeholder = selected.length === 0 ? "Type to add repos" : "Add another repo";
+      selected.forEach(function (value) { renderToken(value, false); });
+      excluded.forEach(function (value) { renderToken(value, true); });
+
+      updatePlaceholder();
       updateClear();
     }
 
@@ -438,7 +478,7 @@
         if (show) {
           shown += 1;
         }
-        option.hidden = !show;
+        optionRow(option).hidden = !show;
       });
 
       if (empty) {
@@ -446,13 +486,15 @@
       }
       if (status) {
         var totalRepos = Math.max(0, options.length - 1);
-        var remaining = Math.max(0, totalRepos - selected.length);
+        var currentCount = selectionCount();
+        var remaining = Math.max(0, totalRepos - currentCount);
         var shownRepos = visibleOptions().filter(function (option) {
           return optionValue(option) !== "";
         }).length;
         if (query === "") {
-          if (selected.length > 0) {
-            status.textContent = remaining > shownRepos ? selected.length + " selected. Showing the first " + shownRepos + " of " + remaining + " remaining repositories." : selected.length + " selected. " + remaining + " more repositories available.";
+          if (selectionCount() > 0) {
+            var summary = selectionSummary() + ". ";
+            status.textContent = remaining > shownRepos ? summary + "Showing the first " + shownRepos + " of " + remaining + " available repositories." : summary + remaining + " more repositories available.";
           } else {
             status.textContent = totalRepos > shownRepos ? "Showing the first " + shownRepos + " of " + totalRepos + " repositories. Type to narrow." : totalRepos + " repositories available.";
           }
@@ -481,12 +523,31 @@
       setActive(null);
     }
 
-    function applyOption(option) {
+    function includeOption(option) {
       var value = optionValue(option);
       if (value === "") {
         selected = [];
-      } else if (selected.indexOf(value) === -1) {
-        selected.push(value);
+        excluded = [];
+      } else {
+        excluded = excluded.filter(function (existing) { return existing !== value; });
+        if (selected.indexOf(value) === -1) {
+          selected.push(value);
+        }
+      }
+      input.value = "";
+      input.setCustomValidity("");
+      renderSelected();
+      filterOptions();
+    }
+
+    function excludeOption(option) {
+      var value = optionValue(option);
+      if (value === "") {
+        return;
+      }
+      selected = selected.filter(function (existing) { return existing !== value; });
+      if (excluded.indexOf(value) === -1) {
+        excluded.push(value);
       }
       input.value = "";
       input.setCustomValidity("");
@@ -495,7 +556,7 @@
     }
 
     function selectOption(option) {
-      applyOption(option);
+      includeOption(option);
       closeMenu();
       input.focus();
     }
@@ -509,7 +570,7 @@
 
       var exact = findExact(text);
       if (exact) {
-        applyOption(exact);
+        includeOption(exact);
         return true;
       }
 
@@ -517,7 +578,7 @@
         return optionValue(option) !== "";
       });
       if (visibleRepoOptions.length === 1) {
-        applyOption(visibleRepoOptions[0]);
+        includeOption(visibleRepoOptions[0]);
         return true;
       }
 
@@ -532,8 +593,14 @@
       openMenu();
     });
     input.addEventListener("keydown", function (event) {
-      if (event.key === "Backspace" && input.value === "" && selected.length > 0) {
-        selected.pop();
+      if (event.key === "Backspace" && input.value === "") {
+        if (selected.length > 0) {
+          selected.pop();
+        } else if (excluded.length > 0) {
+          excluded.pop();
+        } else {
+          return;
+        }
         renderSelected();
         filterOptions();
         return;
@@ -558,7 +625,7 @@
       if (event.key === "Enter" && !menu.classList.contains("hidden")) {
         var option = activeOption || visibleOptions()[0];
         if (option) {
-          if (input.value.trim() === "" && selected.length === 0 && optionValue(option) === "") {
+          if (input.value.trim() === "" && selectionCount() === 0 && optionValue(option) === "") {
             closeMenu();
             return;
           }
@@ -579,9 +646,11 @@
         return;
       }
       var value = button.getAttribute("data-repo-remove") || "";
-      selected = selected.filter(function (existing) {
-        return existing !== value;
-      });
+      if (button.getAttribute("data-repo-remove-mode") === "exclude") {
+        excluded = excluded.filter(function (existing) { return existing !== value; });
+      } else {
+        selected = selected.filter(function (existing) { return existing !== value; });
+      }
       renderSelected();
       filterOptions();
       input.focus();
@@ -596,10 +665,27 @@
       });
     });
 
+    excludeButtons.forEach(function (button) {
+      button.addEventListener("mousedown", function (event) {
+        event.preventDefault();
+      });
+      button.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var option = findByValue(button.getAttribute("data-value") || "");
+        if (option) {
+          excludeOption(option);
+        }
+        openMenu();
+        input.focus();
+      });
+    });
+
     if (clear) {
       clear.addEventListener("click", function (event) {
         event.preventDefault();
         selected = [];
+        excluded = [];
         input.value = "";
         input.setCustomValidity("");
         renderSelected();
@@ -630,6 +716,11 @@
     selected = uniqueValues(Array.from(hiddenContainer.querySelectorAll('input[name="repo"]')).map(function (hidden) {
       return hidden.value;
     }));
+    excluded = uniqueValues(Array.from(hiddenContainer.querySelectorAll('input[name="exclude_repo"]')).map(function (hidden) {
+      return hidden.value;
+    })).filter(function (value) {
+      return selected.indexOf(value) === -1;
+    });
     renderSelected();
     filterOptions();
   }

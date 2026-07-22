@@ -10,6 +10,7 @@ import (
 
 	"github.com/ctourriere/codebeam/internal/config"
 	"github.com/ctourriere/codebeam/internal/indexer"
+	codesearch "github.com/ctourriere/codebeam/internal/search"
 	"github.com/ctourriere/codebeam/internal/store"
 )
 
@@ -188,6 +189,27 @@ func TestEngineSearchFacetsAndFacetFilters(t *testing.T) {
 	}
 	if res.FileCount != 1 || res.Files[0].Path != "a/x.go" {
 		t.Fatalf("top_path filter: want only a/x.go, got %+v", res.Files)
+	}
+
+	filtered = base
+	filtered.Exclude = codesearch.FacetFilters{TopPaths: []string{"a"}}
+	res, err = eng.Search(context.Background(), filtered)
+	if err != nil {
+		t.Fatalf("Search with excluded top filter: %v", err)
+	}
+	if res.FileCount != 1 || res.Files[0].Path != "b/y.go" {
+		t.Fatalf("excluded top_path a: want only b/y.go, got %+v", res.Files)
+	}
+	var excludedA bool
+	for _, group := range res.Facets {
+		if group.Field == "top_path" {
+			for _, value := range group.Values {
+				excludedA = excludedA || (value.Value == "a" && value.Excluded)
+			}
+		}
+	}
+	if !excludedA {
+		t.Fatalf("excluded top_path was not retained in facets: %+v", res.Facets)
 	}
 
 	filtered = base
