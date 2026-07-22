@@ -16,6 +16,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Overlay the freshly built CSS/HTMX from the frontend stage so the assets the
+# Go binary embeds match what is served on disk — otherwise a gitignored, stale
+# static/app.css from the build context could be baked into the binary.
+COPY --from=frontend /src/static ./static
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X github.com/ctourriere/codebeam/internal/version.Version=${VERSION}" \
