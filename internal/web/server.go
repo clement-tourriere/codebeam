@@ -53,6 +53,10 @@ type Server struct {
 	hosts      map[string]*codehost.Client
 	oidc       *oidc.Client
 	chromaCSS  string
+	// assetVersions maps a static filename to a short content hash so the
+	// HTML can request /static/app.css?v=<hash>. A new build changes the hash,
+	// which busts stale browser caches without a manual query bump.
+	assetVersions map[string]string
 }
 
 type LoginData struct {
@@ -237,6 +241,7 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		}),
 		chromaCSS: buildChromaCSS(),
 	}
+	s.assetVersions = s.hashStaticAssets("app.css", "app.js", "htmx.min.js")
 
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"formatUnix":              formatUnix,
@@ -271,6 +276,7 @@ func New(cfg config.Config, st *store.Store, ix *indexer.Indexer) (*Server, erro
 		"branchExtraCount":        branchExtraCount,
 		"branchTitle":             branchTitle,
 		"shortCommit":             shortCommit,
+		"assetURL":                s.assetURL,
 	})
 	var err error
 	// Disk templates win when present (development, Docker image); a released
@@ -302,10 +308,56 @@ func (s *Server) staticFS() http.FileSystem {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(s.staticFS())))
+	mux.Handle("/static/", http.StripPrefix("/static/", s.staticHandler()))
 	mux.HandleFunc("/assets/chroma.css", s.handleChromaCSS)
 	mux.HandleFunc("/", s.route)
 	return mux
+}
+
+// hashStaticAssets computes a short content hash for each named static file so
+// asset URLs can be versioned. Missing files simply get no version suffix.
+func (s *Server) hashStaticAssets(names ...string) map[string]string {
+	versions := make(map[string]string, len(names))
+	fsys := s.staticFS()
+	for _, name := range names {
+		f, err := fsys.Open(name)
+		if err != nil {
+			continue
+		}
+		h := sha256.New()
+		_, copyErr := io.Copy(h, f)
+		_ = f.Close()
+		if copyErr != nil {
+			continue
+		}
+		versions[name] = base64.RawURLEncoding.EncodeToString(h.Sum(nil))[:10]
+	}
+	return versions
+}
+
+// assetURL returns a cache-bustable path for a static asset. The version query
+// changes whenever the file content does, so browsers fetch the new build
+// instead of a stale cached copy.
+func (s *Server) assetURL(name string) string {
+	if v := s.assetVersions[name]; v != "" {
+		return "/static/" + name + "?v=" + v
+	}
+	return "/static/" + name
+}
+
+// staticHandler serves static files, marking versioned requests (those carrying
+// a ?v= content hash) as immutable so browsers cache them aggressively while
+// still picking up new builds via the changed URL.
+func (s *Server) staticHandler() http.Handler {
+	fileServer := http.FileServer(s.staticFS())
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=300")
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleChromaCSS(w http.ResponseWriter, r *http.Request) {

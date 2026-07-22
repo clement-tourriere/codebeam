@@ -52,7 +52,7 @@ func TestSearchResultsReloadRendersFullShell(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, `<link rel="stylesheet" href="/static/app.css">`) {
+	if !strings.Contains(body, `<link rel="stylesheet" href="/static/app.css`) {
 		t.Fatalf("/search/results reload should render the full shell with CSS, got %q", body)
 	}
 }
