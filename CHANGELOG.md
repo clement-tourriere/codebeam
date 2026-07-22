@@ -1,3 +1,9 @@
+## v0.5.1 (2026-07-22)
+
+### Fix
+
+- **docker**: embed the freshly built CSS in the Go binary
+
 ## v0.5.0 (2026-07-22)
 
 ### Feat
