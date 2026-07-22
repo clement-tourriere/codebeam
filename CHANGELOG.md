@@ -1,3 +1,14 @@
+## v0.5.0 (2026-07-22)
+
+### Feat
+
+- **search**: exclude facet values across UI, API, CLI, and MCP
+
+### Fix
+
+- **web**: cache-bust static assets with a content hash
+- **tests**: disable global git hooks in repo-building test helpers
+
 ## v0.4.0 (2026-07-21)
 
 ### Feat
